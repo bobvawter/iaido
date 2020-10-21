@@ -19,8 +19,6 @@ deploy:
   provider: releases
   file: bin/*.tar.gz
   edge: true # opt in to dpl v2
-  draft: true
-  overwrite: true
   on:
     tags: true
 
