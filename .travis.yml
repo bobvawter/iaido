@@ -1,8 +1,3 @@
-branches:
-  only:
-    - main
-    - release-.*
-
 env:
   global:
     - BUILD_SUFFIX="-${TRAVIS_BRANCH}-${TRAVIS_OS_NAME}-${TRAVIS_CPU_ARCH}"
@@ -27,6 +22,5 @@ deploy:
   draft: true
   overwrite: true
   on:
-    branch: main
     tags: true
 
