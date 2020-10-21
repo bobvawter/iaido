@@ -33,8 +33,19 @@ func main() {
 	cfgPath := fs.StringP("config", "c", "iado.json", "the configuration file to load")
 	cfgReloadPeriod := fs.Duration("reloadPeriod", 30*time.Second, "how often to check the configuration file for changes")
 	diagAddr := fs.String("diagAddr", "", "an IP:Port pair to bind a diagnostic HTTP server to (e.g. 127.0.0.1:6060)")
+	version := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(os.Args[1:]); err != nil {
+		if err != pflag.ErrHelp {
+			println(err.Error())
+			println()
+			println(fs.FlagUsagesWrapped(100))
+		}
 		os.Exit(1)
+	}
+
+	if *version {
+		println(frontend.BuildID())
+		os.Exit(0)
 	}
 
 	cfgFile, err := os.Open(*cfgPath)

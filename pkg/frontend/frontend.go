@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package frontend contains the logic for running a network frontend
+// that proxies connections to a backend pool.
 package frontend
 
 import (
@@ -29,7 +31,15 @@ import (
 	"github.com/pkg/errors"
 )
 
-// A Frontend is intended to be a singleton instance which is
+// Set by linker during binary builds.
+var buildID = "development"
+
+// BuildID returns a string that will be injected during the link phase.
+func BuildID() string {
+	return buildID
+}
+
+// A Frontend is intended to be a durable instance which is
 // reconfigured as the need arises.
 type Frontend struct {
 	wg sync.WaitGroup
@@ -106,7 +116,7 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 	ctx, f.mu.cancelPreviousGeneration = context.WithCancel(ctx)
 
 	for _, b := range activeBalancers {
-		go func() {
+		go func(b *balancer.Balancer) {
 			ticker := time.NewTicker(5 * time.Second)
 			for {
 				select {
@@ -119,7 +129,7 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 					}
 				}
 			}
-		}()
+		}(b)
 	}
 	for _, s := range toStart {
 		s.Start(ctx)
@@ -137,9 +147,11 @@ func (f *Frontend) MarshalJSON() ([]byte, error) {
 	defer f.mu.Unlock()
 
 	payload := struct {
+		BuildID   string
 		Config    *config.Config
 		Listeners map[string]*balancer.Balancer
 	}{
+		BuildID:   buildID,
 		Config:    f.mu.config,
 		Listeners: make(map[string]*balancer.Balancer),
 	}

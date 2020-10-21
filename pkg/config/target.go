@@ -38,6 +38,7 @@ const (
 	UDP
 )
 
+// UnmarshalText implements encoding.TextMarshaler.
 func (p *Proto) UnmarshalText(data []byte) error {
 	s := strings.ToUpper(string(data))
 	switch s {
