@@ -1,7 +1,7 @@
 # Iaido
 > A lightweight sidecar proxy for multi-region applications
 
-![](https://travis-ci.org/bobvawter/iaido.svg?branch=main)
+[![Build Status](https://travis-ci.org/bobvawter/iaido.svg?branch=main)](https://travis-ci.org/bobvawter/iaido)
 
 Iaido is intended to ease the way for organizations to adopt
 multi-region application architectures without needing to roll out a
