@@ -76,6 +76,7 @@ func (f *Frontend) Validate() error {
 	return f.BackendPool.Validate()
 }
 
+// BackendPool represents the actual machines to connect to.
 type BackendPool struct {
 	DialFailureTimeout    string
 	MaxBackendConnections int

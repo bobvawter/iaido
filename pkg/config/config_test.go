@@ -52,5 +52,6 @@ func TestMinimalConfig(t *testing.T) {
 	cfg2, err := ParseConfig(bytes.NewReader(data))
 	a.NoError(err)
 	data2, err := json.Marshal(cfg2)
+	a.NoError(err)
 	t.Log(string(data2))
 }
