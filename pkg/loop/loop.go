@@ -17,13 +17,11 @@ package loop
 import (
 	"context"
 	"log"
+	"math"
 	"net"
 	"time"
 
-	"sync"
-
-	"math"
-
+	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/semaphore"
 )
@@ -48,7 +46,7 @@ func New(options ...Option) *Loop {
 func (s *Loop) Start(ctx context.Context) {
 	maxConns := semaphore.NewWeighted(math.MaxInt64)
 	var tcpLoops []*tcpHandler
-	var wg *sync.WaitGroup
+	var latch *latch.Latch
 
 	// Filter out "static" options.
 	n := 0
@@ -58,8 +56,8 @@ func (s *Loop) Start(ctx context.Context) {
 			maxConns = semaphore.NewWeighted(int64(t))
 		case *tcpHandler:
 			tcpLoops = append(tcpLoops, t)
-		case waitGroup:
-			wg = t.wg
+		case withLatch:
+			latch = t.latch
 		default:
 			s.options[n] = opt
 			n++
@@ -86,12 +84,14 @@ func (s *Loop) Start(ctx context.Context) {
 					log.Print(errors.Wrap(err, "server loop exiting"))
 					return
 				}
+				if latch != nil {
+					latch.Hold()
+				}
 				_ = maxConns.Acquire(ctx, 1)
 				go func() {
 					defer maxConns.Release(1)
-					if wg != nil {
-						wg.Add(1)
-						defer wg.Done()
+					if latch != nil {
+						defer latch.Release()
 					}
 					ctx, cancel := context.WithCancel(ctx)
 					defer cancel()

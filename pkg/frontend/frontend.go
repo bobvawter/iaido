@@ -28,6 +28,7 @@ import (
 	"github.com/bobvawter/iaido/pkg/balancer"
 	"github.com/bobvawter/iaido/pkg/config"
 	"github.com/bobvawter/iaido/pkg/frontend/tcp"
+	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
 	"github.com/pkg/errors"
 )
@@ -43,9 +44,9 @@ func BuildID() string {
 // A Frontend is intended to be a durable instance which is
 // reconfigured as the need arises.
 type Frontend struct {
-	wg sync.WaitGroup
 	mu struct {
 		sync.Mutex
+		latch *latch.Latch
 		// A map of local listen addresses to the plumbing that handles
 		// the connectivity.
 		loops map[config.Target]*balanceLoop
@@ -66,6 +67,10 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 
 	if f.mu.loops == nil {
 		f.mu.loops = make(map[config.Target]*balanceLoop)
+	}
+
+	if f.mu.latch == nil {
+		f.mu.latch = latch.New()
 	}
 
 	activeTargets := make(map[config.Target]bool)
@@ -111,7 +116,7 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 				loop.New(
 					tcp.Proxy(listener, bl.balancer, idleDuration),
 					loop.WithMaxWorkers(fe.IncomingConnections),
-					loop.WithWaitGroup(&f.wg),
+					loop.WithLatch(f.mu.latch),
 				).Start(loopCtx)
 			default:
 				panic(errors.Errorf("unimplemented: %s", tgt.Proto))
@@ -156,5 +161,11 @@ func (f *Frontend) MarshalJSON() ([]byte, error) {
 
 // Wait for all active connections to drain.
 func (f *Frontend) Wait() {
-	f.wg.Wait()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Not started yet.
+	if f.mu.latch == nil {
+		return
+	}
+	f.mu.latch.Wait()
 }
