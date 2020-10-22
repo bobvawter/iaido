@@ -16,7 +16,6 @@
 package pool
 
 import (
-	"container/heap"
 	"encoding/json"
 	"sort"
 	"sync"
@@ -28,10 +27,13 @@ import (
 type Pool struct {
 	mu struct {
 		sync.Mutex
-		disabled []*entryMeta
-		mark     uint64
-		meta     map[Entry]*entryMeta
-		q        entryPQueue
+		// This is used to create a canonicalization of user-provided
+		// Entry instances to our tracking metadata.
+		canonical map[Entry]*entryMeta
+		// Mark is a monotonic counter that's used to create a
+		// round-robin effect.
+		mark uint64
+		q    entryPQueue
 	}
 }
 
@@ -41,25 +43,22 @@ func (p *Pool) Add(e Entry) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.mu.meta == nil {
-		p.mu.meta = make(map[Entry]*entryMeta)
+	if p.mu.canonical == nil {
+		p.mu.canonical = make(map[Entry]*entryMeta)
 	}
 
-	if existing := p.mu.meta[e]; existing != nil {
+	if existing := p.mu.canonical[e]; existing != nil {
 		return
 	}
 
-	entry := &entryMeta{Entry: e}
-	p.mu.meta[e] = entry
-	entry.snapshot()
-	heap.Push(&p.mu.q, entry)
+	p.mu.canonical[e] = p.mu.q.add(e)
 }
 
 // All returns all entries currently in the Pool.
 func (p *Pool) All() []Entry {
 	p.mu.Lock()
-	all := make([]*entryMeta, 0, len(p.mu.q)+len(p.mu.disabled))
-	all = append(append(all, p.mu.q...), p.mu.disabled...)
+	all := make([]*entryMeta, len(p.mu.q))
+	copy(all, p.mu.q)
 	p.mu.Unlock()
 
 	ret := make([]Entry, len(all))
@@ -72,7 +71,7 @@ func (p *Pool) All() []Entry {
 // Len returns the total size of the pool.
 func (p *Pool) Len() int {
 	p.mu.Lock()
-	ret := len(p.mu.q) + len(p.mu.disabled)
+	ret := len(p.mu.q)
 	p.mu.Unlock()
 	return ret
 }
@@ -80,20 +79,17 @@ func (p *Pool) Len() int {
 // MarshalJSON dumps the current status of the Pool into a JSON structure.
 func (p *Pool) MarshalJSON() ([]byte, error) {
 	p.mu.Lock()
-	d := make([]*entryMeta, len(p.mu.disabled))
-	copy(d, p.mu.disabled)
-	q := make([]*entryMeta, len(p.mu.q))
-	copy(q, p.mu.q)
+	snapshot := make([]*entryMeta, len(p.mu.q))
+	copy(snapshot, p.mu.q)
 	p.mu.Unlock()
 
 	payload := struct {
-		Disabled []*entryMeta
-		Tiers    map[int][]*entryMeta
+		Tiers map[int][]*entryMeta
 	}{
-		Disabled: d,
-		Tiers:    make(map[int][]*entryMeta, len(q)),
+		Tiers: make(map[int][]*entryMeta),
 	}
-	for _, entry := range q {
+
+	for _, entry := range snapshot {
 		payload.Tiers[entry.tier] = append(payload.Tiers[entry.tier], entry)
 	}
 	for _, tier := range payload.Tiers {
@@ -104,40 +100,32 @@ func (p *Pool) MarshalJSON() ([]byte, error) {
 	return json.Marshal(payload)
 }
 
+// Pick will return the next Entry to use.
+func (p *Pool) Pick() Entry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Choose the best enabled entry.
+	for range p.mu.q {
+		top := p.mu.q[0]
+		p.mu.mark++
+		p.mu.q.update(top, p.mu.mark)
+
+		if !top.disabled {
+			return top.Entry
+		}
+	}
+	return nil
+}
+
 // Rebalance will re-prioritize all entries based on their Load and
 // Tier. This method only needs to be called if entries are expected
 // to be picked infrequently, as their status will be sampled during
 // a call to Pick().
 func (p *Pool) Rebalance() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.reenableLocked()
-	for i := range p.mu.q {
-		p.mu.q[i].snapshot()
-	}
-	heap.Init(&p.mu.q)
-}
-
-// Pick will return the next Entry to use.
-func (p *Pool) Pick() Entry {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Re-seed with re-enabled entries.
-	p.reenableLocked()
-
-	for {
-		// Empty case, all entries are disabled.
-		if len(p.mu.q) == 0 {
-			return nil
-		}
-
-		// Choose the best enabled entry.
-		if top := p.chooseLocked(); top != nil {
-			return top.Entry
-		}
-	}
+	p.mu.q.updateAll()
+	p.mu.Unlock()
 }
 
 // Remove discards the given entry from the pool.
@@ -145,49 +133,8 @@ func (p *Pool) Remove(e Entry) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if existing := p.mu.meta[e]; existing != nil {
-		delete(p.mu.meta, e)
-
-		for i := range p.mu.disabled {
-			if p.mu.disabled[i].Entry == e {
-				p.mu.disabled = append(p.mu.disabled[:i], p.mu.disabled[i+1:]...)
-				return
-			}
-		}
-
-		heap.Remove(&p.mu.q, existing.index)
+	if existing := p.mu.canonical[e]; existing != nil {
+		delete(p.mu.canonical, e)
+		p.mu.q.remove(existing)
 	}
-}
-
-// chooseLocked will return the best entry.  If the best entry is
-// disabled, it will be moved into the disabled pool and nil will be
-// returned.
-func (p *Pool) chooseLocked() *entryMeta {
-	top := p.mu.q[0]
-	if top.Disabled() {
-		heap.Pop(&p.mu.q)
-		p.mu.disabled = append(p.mu.disabled, top)
-		return nil
-	}
-	top.snapshot()
-	p.mu.mark++
-	top.mark = p.mu.mark
-	heap.Fix(&p.mu.q, top.index)
-	return top
-}
-
-// reenabledLocked moves re-enabled entries from the disabled list back
-// into the head.
-func (p *Pool) reenableLocked() {
-	n := 0
-	for i, meta := range p.mu.disabled {
-		if meta.Disabled() {
-			p.mu.disabled[n] = p.mu.disabled[i]
-			n++
-		} else {
-			meta.snapshot()
-			heap.Push(&p.mu.q, meta)
-		}
-	}
-	p.mu.disabled = p.mu.disabled[:n]
 }

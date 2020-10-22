@@ -42,8 +42,9 @@ func Proxy(listener *net.TCPListener, balancer *balancer.Balancer, idleDuration 
 			if backend == nil {
 				return errors.Errorf("no backend available")
 			}
+
 			retry, err := backend.Dial(ctx, func(ctx context.Context, outgoing net.Conn) error {
-				return proxy(ctx, incoming, outgoing.(*net.TCPConn), idleDuration)
+				return proxy(ctx, balancer, backend, incoming, outgoing.(*net.TCPConn), idleDuration)
 			})
 			if retry {
 				continue
@@ -54,7 +55,13 @@ func Proxy(listener *net.TCPListener, balancer *balancer.Balancer, idleDuration 
 }
 
 // proxy implements the main data-copying behavior for a TCP frontend.
-func proxy(ctx context.Context, incoming, outgoing *net.TCPConn, idleDuration time.Duration) error {
+func proxy(
+	ctx context.Context,
+	balancer *balancer.Balancer,
+	backend *balancer.Backend,
+	incoming, outgoing *net.TCPConn,
+	idleDuration time.Duration,
+) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -62,27 +69,46 @@ func proxy(ctx context.Context, incoming, outgoing *net.TCPConn, idleDuration ti
 
 	// This sets up an idle-detection loop.
 	var activity func(int, int)
-	if idleDuration != 0 {
-		var idleAt atomic.Value
-		idleAt.Store(time.Now().Add(idleDuration))
-		activity = func(read, written int) {
-			idleAt.Store(time.Now().Add(idleDuration))
-		}
+	var activeAt atomic.Value
+	activeAt.Store(time.Now().Add(idleDuration))
+	activity = func(read, written int) {
+		activeAt.Store(time.Now())
+	}
 
-		group.Go(func() error {
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.NewTimer(idleDuration).C:
-					idleTime := idleAt.Load().(time.Time)
-					if time.Now().After(idleTime) {
-						return errors.Errorf("idle timeout exceeded %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
-					}
+	group.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.NewTimer(idleDuration).C:
+				if time.Now().After(activeAt.Load().(time.Time).Add(idleDuration)) {
+					return errors.Errorf("idle timeout (%s) exceeded %s -> %s", idleDuration, incoming.RemoteAddr(), outgoing.RemoteAddr())
 				}
 			}
-		})
-	}
+		}
+	})
+
+	group.Go(func() error {
+		maybeForce := backend.Tier() > 0
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.NewTimer(time.Second).C:
+				// Try to force clients back to a higher tier down to a
+				// reasonable minimum for highly-active flows.
+				if maybeForce {
+					if better := balancer.Pick(); better != nil && better.Tier() < backend.Tier() {
+						maybeForce = false
+						idleDuration = 10 * time.Millisecond
+					}
+				}
+				if backend.ShedLoad() {
+					return errors.Errorf("shedding load %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
+				}
+			}
+		}
+	})
 
 	// Copy incoming data to outgoing connection.
 	group.Go(func() error {

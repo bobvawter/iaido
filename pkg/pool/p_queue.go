@@ -13,43 +13,83 @@
 
 package pool
 
+import (
+	"container/heap"
+)
+
 // This is based on the reference code from the heap package.
+//
+// Callers must not modify the slice directly, all updates should
+// be done through the mutation methods.
 type entryPQueue []*entryMeta
 
 // Len implements heap.Interface.
-func (e entryPQueue) Len() int {
-	return len(e)
+func (q entryPQueue) Len() int {
+	return len(q)
 }
 
-// Less implements heap.Interface.  Since we want a priority-queue
-// behavior, we're inverting the comparison.
-func (e entryPQueue) Less(i, j int) bool {
-	a, b := e[i], e[j]
-	return !a.lowerPriorityThan(b)
+// Less implements heap.Interface.
+func (q entryPQueue) Less(i, j int) bool {
+	a, b := q[i], q[j]
+	return a.costLowerThan(b)
 }
 
 // Swap implements heap.Interface.
-func (e entryPQueue) Swap(i, j int) {
-	e[i], e[j] = e[j], e[i]
-	e[i].index = i
-	e[j].index = j
+func (q entryPQueue) Swap(i, j int) {
+	q[i], q[j] = q[j], q[i]
+	q[i].index = i
+	q[j].index = j
 }
 
 // Push implements heap.Interface.
-func (e *entryPQueue) Push(x interface{}) {
-	n := len(*e)
+func (q *entryPQueue) Push(x interface{}) {
+	n := len(*q)
 	entry := x.(*entryMeta)
 	entry.index = n
-	*e = append(*e, entry)
+	*q = append(*q, entry)
 }
 
 // Pop implements heap.Interface.
-func (e *entryPQueue) Pop() interface{} {
-	old := *e
+func (q *entryPQueue) Pop() interface{} {
+	old := *q
 	n := len(old)
 	item := old[n-1]
-	old[n-1] = nil
 	item.index = -1
-	*e = old[0 : n-1]
+	old[n-1] = nil
+	*q = old[0 : n-1]
 	return item
+}
+
+func (q *entryPQueue) add(entry Entry) *entryMeta {
+	ret := &entryMeta{
+		Entry:    entry,
+		disabled: entry.Disabled(),
+		index:    -1,
+		load:     entry.Load(),
+		mark:     0,
+		tier:     entry.Tier(),
+	}
+	heap.Push(q, ret)
+	return ret
+}
+
+func (q *entryPQueue) update(meta *entryMeta, mark uint64) {
+	meta.disabled = meta.Disabled()
+	meta.load = meta.Load()
+	meta.mark = mark
+	meta.tier = meta.Tier()
+	heap.Fix(q, meta.index)
+}
+
+func (q *entryPQueue) updateAll() {
+	for _, meta := range *q {
+		meta.disabled = meta.Disabled()
+		meta.load = meta.Load()
+		meta.tier = meta.Tier()
+	}
+	heap.Init(q)
+}
+
+func (q *entryPQueue) remove(meta *entryMeta) {
+	heap.Remove(q, meta.index)
 }

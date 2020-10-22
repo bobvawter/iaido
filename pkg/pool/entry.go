@@ -32,8 +32,15 @@ type Entry interface {
 }
 
 // entryMeta associates additional metadata with a user-provide Entry.
+//
+// This type contains snapshots of the information that we gather
+// from the user-provided Entry in order to ensure stability during
+// comparison operations.
 type entryMeta struct {
 	Entry
+
+	// Snapshot of Disabled().
+	disabled bool
 	// This is the internal index used by the heap package.
 	index int
 	// Snapshot of Load().
@@ -47,34 +54,30 @@ type entryMeta struct {
 
 func (e *entryMeta) MarshalJSON() ([]byte, error) {
 	payload := struct {
-		Entry interface{}
-		Load  int
-		Mark  uint64
-		Tier  int
+		Disabled bool
+		Entry    interface{}
+		Load     int
+		Mark     uint64
+		Tier     int
 	}{
-		Entry: e.Entry,
-		Load:  e.load,
-		Mark:  e.mark,
-		Tier:  e.tier,
+		Disabled: e.disabled,
+		Entry:    e.Entry,
+		Load:     e.load,
+		Mark:     e.mark,
+		Tier:     e.tier,
 	}
 	return json.Marshal(payload)
 }
 
-func (e *entryMeta) lowerPriorityThan(other *entryMeta) bool {
-	if e.tier > other.tier {
-		return true
+func (e *entryMeta) costLowerThan(other *entryMeta) bool {
+	if e.disabled != other.disabled {
+		return other.disabled
 	}
-	if e.load > other.load {
-		return true
+	if c := e.tier - other.tier; c != 0 {
+		return c < 0
 	}
-	if e.mark > other.mark {
-		return true
+	if c := e.load - other.load; c != 0 {
+		return c < 0
 	}
-	return false
-}
-
-// snapshot updates the local metadata information.
-func (e *entryMeta) snapshot() {
-	e.load = e.Load()
-	e.tier = e.Tier()
+	return e.mark < other.mark
 }

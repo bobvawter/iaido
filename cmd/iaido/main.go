@@ -30,10 +30,10 @@ import (
 
 func main() {
 	fs := pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
-	cfgPath := fs.StringP("config", "c", "iado.json", "the configuration file to load")
+	cfgPath := fs.StringP("config", "c", "iaido.json", "the configuration file to load")
 	cfgReloadPeriod := fs.Duration("reloadPeriod", 30*time.Second, "how often to check the configuration file for changes")
 	diagAddr := fs.String("diagAddr", "", "an IP:Port pair to bind a diagnostic HTTP server to (e.g. 127.0.0.1:6060)")
-	gracePeriod := fs.Duration("gracePeriod", 30*time.Second, "how long to wait before forecfully terminating")
+	gracePeriod := fs.Duration("gracePeriod", 30*time.Second, "how long to wait before forcefully terminating")
 	version := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		if err != pflag.ErrHelp {
@@ -81,12 +81,6 @@ func main() {
 		}()
 	}
 
-	cfgFile, err := os.Open(*cfgPath)
-	if err != nil {
-		log.Fatal(errors.Wrapf(err, "could not open configuration file %s", *cfgPath))
-	}
-
-	var cfg *config.Config
 	var mTime time.Time
 
 	hupped := make(chan os.Signal, 1)
@@ -101,22 +95,20 @@ refreshLoop:
 			if info.ModTime().After(mTime) {
 				mTime = info.ModTime()
 
-				if _, err := cfgFile.Seek(0, 0); err != nil {
-					log.Print(errors.Wrap(err, "could not seek in config file"))
+				cfg, err := loadConfig(*cfgPath)
+				if err != nil {
+					log.Print(errors.Wrap(err, "configuration load failed"))
 					continue
 				}
 
-				cfg, err = config.ParseConfig(cfgFile)
-				if err != nil {
-					log.Print(errors.Wrap(err, "configuration reload failed"))
+				if err := fe.Ensure(ctx, cfg); err != nil {
+					log.Print(errors.Wrapf(err, "unable to refresh backends"))
 					continue
 				}
 				log.Print("configuration updated")
 			}
-		}
-
-		if err := fe.Ensure(ctx, cfg); err != nil {
-			log.Print(errors.Wrapf(err, "unable to refresh backends"))
+		} else {
+			log.Printf("unable to stat config file: %v", err)
 		}
 
 		select {
@@ -127,8 +119,17 @@ refreshLoop:
 		}
 	}
 
-	<-ctx.Done()
 	fe.Wait()
 	log.Print("drained, goodbye!")
 	os.Exit(0)
+}
+
+func loadConfig(path string) (*config.Config, error) {
+	cfgFile, err := os.Open(path)
+	if err != nil {
+		return nil, errors.Wrapf(err, "could not open configuration file %s", path)
+	}
+	defer cfgFile.Close()
+
+	return config.ParseConfig(cfgFile)
 }

@@ -126,6 +126,23 @@ func TestSingletonPool(t *testing.T) {
 	}
 }
 
+func TestOneTier(t *testing.T) {
+	const entryCount = 128
+	a := assert.New(t)
+
+	var p pool.Pool
+
+	tier0 := make([]*trivial, entryCount)
+	for i := range tier0 {
+		tier0[i] = &trivial{name: fmt.Sprintf("tier0-%d", i)}
+		p.Add(tier0[i])
+	}
+
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
+}
+
 func TestTwoTier(t *testing.T) {
 	const entryCount = 128
 	a := assert.New(t)
@@ -145,6 +162,8 @@ func TestTwoTier(t *testing.T) {
 	}
 
 	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
 
 	// Now, disable the top-tier entries and see that the next
 	// tier is being chosen.
@@ -153,42 +172,74 @@ func TestTwoTier(t *testing.T) {
 	}
 
 	checkRoundRobin(a, &p, tier1)
+	checkRoundRobin(a, &p, tier1)
+	checkRoundRobin(a, &p, tier1)
 
 	// Re-enable.
 	for i := range tier0 {
 		tier0[i].disabled = false
 	}
 	p.Rebalance()
-
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
 	checkRoundRobin(a, &p, tier0)
 }
 
-func TestRoundRobin(t *testing.T) {
+func TestThreeTier(t *testing.T) {
 	const entryCount = 128
-	const repeats = 16
 	a := assert.New(t)
 
 	var p pool.Pool
 
-	entries := make([]*trivial, entryCount)
-	for i := range entries {
-		entries[i] = &trivial{}
-		p.Add(entries[i])
+	tier0 := make([]*trivial, entryCount)
+	for i := range tier0 {
+		tier0[i] = &trivial{name: fmt.Sprintf("tier0-%d", i)}
+		p.Add(tier0[i])
 	}
 
-	for i := 0; i < repeats; i++ {
-		checkRoundRobin(a, &p, entries)
+	tier1 := make([]*trivial, entryCount)
+	for i := range tier1 {
+		tier1[i] = &trivial{name: fmt.Sprintf("tier1-%d", i), tier: 1}
+		p.Add(tier1[i])
 	}
+
+	tier2 := make([]*trivial, entryCount)
+	for i := range tier2 {
+		tier2[i] = &trivial{name: fmt.Sprintf("tier2-%d", i), tier: 2}
+		p.Add(tier2[i])
+	}
+
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
+
+	// Now, disable the top-tier entries and see that the next
+	// tier is being chosen.
+	for i := range tier0 {
+		tier0[i].disabled = true
+	}
+
+	checkRoundRobin(a, &p, tier1)
+	checkRoundRobin(a, &p, tier1)
+	checkRoundRobin(a, &p, tier1)
+
+	// Re-enable.
+	for i := range tier0 {
+		tier0[i].disabled = false
+	}
+	p.Rebalance()
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
+	checkRoundRobin(a, &p, tier0)
 }
 
 func checkRoundRobin(a *assert.Assertions, p *pool.Pool, expected []*trivial) {
 	seen := make(map[*trivial]bool, len(expected))
 
-	for i := 0; i < len(expected); i++ {
+	for range expected {
 		found := p.Pick().(*trivial)
 		a.Contains(expected, found)
 		a.Falsef(seen[found], "saw %s again", found)
 		seen[found] = true
-		found.load++
 	}
 }
