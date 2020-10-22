@@ -17,11 +17,11 @@ import (
 	"bytes"
 	"context"
 	"net"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
 	it "github.com/bobvawter/iaido/pkg/testing"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +29,7 @@ import (
 
 // This is a simple smoke-test to validate end-to-end reception.
 func TestCopierHappyPath(t *testing.T) {
-	const numChars = 4 * 1024 * 1024
+	const numChars = 1024 * 1024
 	a := assert.New(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -46,12 +46,12 @@ func TestCopierHappyPath(t *testing.T) {
 	}
 
 	var sink bytes.Buffer
-	var wg sync.WaitGroup
+	l := latch.New()
 	sinkAddr, opt, err := it.Capture(&sink)
 	if !a.NoError(err) {
 		return
 	}
-	loop.New(opt, loop.WithWaitGroup(&wg)).Start(ctx)
+	loop.New(opt, loop.WithLatch(l)).Start(ctx)
 
 	sinkConn, err := net.Dial(sinkAddr.Network(), sinkAddr.String())
 	if !a.NoError(err) {
@@ -73,7 +73,7 @@ func TestCopierHappyPath(t *testing.T) {
 		Linger:   10 * time.Millisecond,
 	}
 	a.NoError(c.Copy(ctx))
-	wg.Wait()
+	l.Wait()
 	a.Equal(numChars, int(atomic.LoadUint32(&totalRead)))
 	a.Equal(numChars, int(atomic.LoadUint32(&totalWrite)))
 	a.Equal(numChars, sink.Len())

@@ -17,8 +17,9 @@ import (
 	"context"
 	"math"
 	"net"
-	"sync"
 	"sync/atomic"
+
+	"github.com/bobvawter/iaido/pkg/latch"
 )
 
 // An Option is used to provide additional configuration to a server or
@@ -56,18 +57,18 @@ type maxWorkers int
 
 func (maxWorkers) onConnection(context.Context) {}
 
-// WithWaitGroup will inject a WaitGroup that is held whenever a
+// WithLatch will inject a Latch that is held whenever a
 // connection is active.  This allows callers to implement a graceful
 // draining strategy.
-func WithWaitGroup(wg *sync.WaitGroup) Option {
-	return waitGroup{wg}
+func WithLatch(l *latch.Latch) Option {
+	return withLatch{l}
 }
 
-type waitGroup struct {
-	wg *sync.WaitGroup
+type withLatch struct {
+	latch *latch.Latch
 }
 
-func (waitGroup) onConnection(context.Context) {}
+func (withLatch) onConnection(context.Context) {}
 
 // WithTCPHandler defines a callback for TCP connections.
 func WithTCPHandler(listener *net.TCPListener, fn func(context.Context, *net.TCPConn) error) Option {

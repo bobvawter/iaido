@@ -11,44 +11,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testing
+package latch
 
 import (
-	"bytes"
-	"context"
-	"io"
-	"net"
 	"testing"
+	"time"
 
-	"github.com/bobvawter/iaido/pkg/latch"
-	"github.com/bobvawter/iaido/pkg/loop"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCapture(t *testing.T) {
+func TestLatch(t *testing.T) {
 	a := assert.New(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	l := New()
+	a.Equal(0, l.Count())
+	a.False(l.Wait())
 
-	var buf bytes.Buffer
-	addr, opt, err := Capture(&buf)
-	if !a.NoError(err) {
-		return
-	}
+	l.Hold()
+	a.Equal(1, l.Count())
 
-	l := latch.New()
-	loop.New(opt, loop.WithLatch(l)).Start(ctx)
+	go func() {
+		// This is gross :-(
+		time.Sleep(10 * time.Millisecond)
+		l.Release()
+	}()
 
-	conn, err := net.Dial(addr.Network(), addr.String())
-	if !a.NoError(err) {
-		return
-	}
-
-	const size = 1024 * 1024
-	_, err = io.Copy(conn, bytes.NewReader(make([]byte, size)))
-	a.NoError(err)
-	a.NoError(conn.Close())
-	l.Wait()
-	a.Equal(size, buf.Len())
+	a.True(l.Wait())
+	a.Equal(0, l.Count())
 }
