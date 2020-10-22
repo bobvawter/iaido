@@ -57,7 +57,9 @@ func (l *Latch) Release() {
 		panic("cannot release zero-count Latch")
 	}
 	l.count--
-	l.cond.Broadcast()
+	if l.count == 0 {
+		l.cond.Broadcast()
+	}
 }
 
 // Wait pauses the caller until the use-count is zero.

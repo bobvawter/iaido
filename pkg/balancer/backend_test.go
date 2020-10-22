@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bobvawter/iaido/pkg/config"
 	"github.com/bobvawter/iaido/pkg/loop"
 	it "github.com/bobvawter/iaido/pkg/testing"
 	"github.com/stretchr/testify/assert"
@@ -39,11 +38,8 @@ func TestBackend(t *testing.T) {
 
 	b := &Backend{
 		addr: addr,
-		config: func() *config.BackendPool {
-			return &config.BackendPool{}
-		},
-		tier: 2,
 	}
+	b.mu.tier = 2
 	a.Equal(0, b.Load())
 	a.Equal(2, b.Tier())
 	a.False(b.Disabled())
@@ -72,10 +68,8 @@ func TestBackendToNowhere(t *testing.T) {
 			IP:   []byte{127, 0, 0, 1},
 			Port: 2,
 		},
-		config: func() *config.BackendPool {
-			return &config.BackendPool{DialFailureTimeout: "1h"}
-		},
 	}
+	b.mu.dialTimeout = time.Second
 
 	retry, err := b.Dial(context.Background(), func(ctx context.Context, conn net.Conn) error {
 		return nil

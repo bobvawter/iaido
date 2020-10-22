@@ -21,7 +21,8 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"sync/atomic"
+	"sync"
+	"time"
 
 	"github.com/bobvawter/iaido/pkg/config"
 	"github.com/bobvawter/iaido/pkg/pool"
@@ -30,27 +31,42 @@ import (
 
 // A Balancer implements pooling behavior across resolved backends.
 type Balancer struct {
-	p   pool.Pool
-	cfg atomic.Value
+	p  pool.Pool
+	mu struct {
+		sync.Mutex
+		cfg *config.BackendPool
+	}
 }
 
-// Config returns a copy of the currently-active configuration.
+// Config returns the currently-active configuration.
 func (b *Balancer) Config() *config.BackendPool {
-	return b.cfg.Load().(*config.BackendPool)
+	b.mu.Lock()
+	ret := b.mu.cfg
+	b.mu.Unlock()
+	return ret
 }
 
 // Configure will initialize or update the pool configuration and
 // attempt to resolve the targets.
-func (b *Balancer) Configure(ctx context.Context, cfg *config.BackendPool, tolerateErrors bool) error {
-	b.cfg.Store(cfg)
-	entryCount := b.p.Len()
+func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolerateErrors bool) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.mu.cfg = &cfg
+
+	dialTimeout, err := time.ParseDuration(cfg.DialFailureTimeout)
+	if err != nil {
+		return errors.Wrapf(err, "could not parse DialFailureTimeout")
+	}
+	if dialTimeout == 0 {
+		dialTimeout = time.Minute
+	}
 
 	// Try to retain existing Backend objects across refreshes
 	// to retain metadata / metrics.
 	key := func(addr net.Addr) string {
 		return fmt.Sprintf("%s:%s", addr.Network(), addr.String())
 	}
-	canonicalBackends := make(map[string]*Backend, entryCount)
+	canonicalBackends := make(map[string]*Backend, b.p.Len())
 	for _, x := range b.p.All() {
 		backend := x.(*Backend)
 		canonicalBackends[key(backend.addr)] = backend
@@ -58,7 +74,7 @@ func (b *Balancer) Configure(ctx context.Context, cfg *config.BackendPool, toler
 
 	backendsInUse := make(map[*Backend]bool)
 
-	for tierIdx, tier := range b.Config().Tiers {
+	for tierIdx, tier := range cfg.Tiers {
 		for _, target := range tier.Targets {
 			addrs, err := target.Resolve(ctx)
 			if err != nil {
@@ -72,17 +88,18 @@ func (b *Balancer) Configure(ctx context.Context, cfg *config.BackendPool, toler
 			for _, addr := range addrs {
 				backend := canonicalBackends[key(addr)]
 				if backend == nil {
-					backend = &Backend{
-						addr:   addr,
-						config: b.Config,
-						tier:   tierIdx,
-					}
+					backend = &Backend{addr: addr}
 					canonicalBackends[key(addr)] = backend
-				} else {
-					// Support moving backends between tiers.
-					backend.tier = tierIdx
 				}
 				backendsInUse[backend] = true
+
+				// (Re-)configure the backend.
+				backend.mu.Lock()
+				backend.mu.disabled = target.Disabled
+				backend.mu.dialTimeout = dialTimeout
+				backend.mu.maxConnections = cfg.MaxBackendConnections
+				backend.mu.tier = tierIdx
+				backend.mu.Unlock()
 			}
 		}
 	}
@@ -95,10 +112,15 @@ func (b *Balancer) Configure(ctx context.Context, cfg *config.BackendPool, toler
 		if !backendsInUse[backend] {
 			log.Printf("removing backend %q", backend.addr)
 			b.p.Remove(backend)
+
+			// Force existing connections to go into drain mode.
+			backend.mu.Lock()
+			backend.mu.disabled = true
+			backend.mu.Unlock()
 		}
 	}
 
-	b.p.Rebalance()
+	b.Rebalance(ctx)
 
 	return nil
 }
@@ -121,6 +143,11 @@ func (b *Balancer) MarshalJSON() ([]byte, error) {
 func (b *Balancer) Pick() *Backend {
 	ret, _ := b.p.Pick().(*Backend)
 	return ret
+}
+
+// Rebalance will rebalance the underlying pool.
+func (b *Balancer) Rebalance(context.Context) {
+	b.p.Rebalance()
 }
 
 func (b *Balancer) String() string {

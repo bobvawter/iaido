@@ -33,21 +33,21 @@ func TestParseTarget(t *testing.T) {
 		{
 			val: "127.0.0.1:8080",
 			expected: Target{
-				Host: "127.0.0.1",
-				Port: 8080,
+				Hosts: []string{"127.0.0.1"},
+				Port:  8080,
 			},
 		},
 		{
 			val: "tcp:127.0.0.1:8080",
 			expected: Target{
-				Host: "127.0.0.1",
-				Port: 8080,
+				Hosts: []string{"127.0.0.1"},
+				Port:  8080,
 			},
 		},
 		{
 			val: "udp:127.0.0.1:8080",
 			expected: Target{
-				Host:  "127.0.0.1",
+				Hosts: []string{"127.0.0.1"},
 				Port:  8080,
 				Proto: UDP,
 			},
@@ -55,15 +55,15 @@ func TestParseTarget(t *testing.T) {
 		{
 			val: "localhost:8080",
 			expected: Target{
-				Host: "localhost",
-				Port: 8080,
+				Hosts: []string{"localhost"},
+				Port:  8080,
 			},
 		},
 		{
 			val: "[::1]:8080",
 			expected: Target{
-				Host: "::1",
-				Port: 8080,
+				Hosts: []string{"::1"},
+				Port:  8080,
 			},
 		},
 		{
@@ -100,7 +100,7 @@ func TestResolve(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	tgt := &Target{Host: "google.com", Port: 80}
+	tgt := &Target{Hosts: []string{"google.com"}, Port: 80}
 
 	resolved, err := tgt.Resolve(ctx)
 	a.NoError(err)

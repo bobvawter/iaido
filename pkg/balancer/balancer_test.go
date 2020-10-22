@@ -52,7 +52,7 @@ func TestBalancerEndToEnd(t *testing.T) {
 		}
 	}
 
-	cfg := &config.BackendPool{
+	cfg := config.BackendPool{
 		DialFailureTimeout: "100ms",
 		Tiers:              []config.Tier{{Targets: targets}},
 	}
@@ -71,6 +71,13 @@ func TestBalancerEndToEnd(t *testing.T) {
 	}
 
 	t.Log(b)
+
+	// Disable all backends and verify behavior
+	for i := range cfg.Tiers[0].Targets {
+		cfg.Tiers[0].Targets[i].Disabled = true
+	}
+	a.NoError(b.Configure(ctx, cfg, false))
+	a.Nil(b.Pick())
 }
 
 // Ensure that Backend instances are preserved across reconfigurations.
@@ -80,7 +87,7 @@ func TestBalancerReconfigure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	cfg := &config.BackendPool{
+	cfg := config.BackendPool{
 		DialFailureTimeout: "100ms",
 		Tiers:              []config.Tier{{}},
 	}
@@ -89,7 +96,7 @@ func TestBalancerReconfigure(t *testing.T) {
 	a.NoError(b.Configure(ctx, cfg, false))
 
 	for i := 0; i < backends; i++ {
-		cfg.Tiers[0].Targets = append(cfg.Tiers[0].Targets, config.Target{Host: "127.0.0.1", Port: i, Proto: config.TCP})
+		cfg.Tiers[0].Targets = append(cfg.Tiers[0].Targets, config.Target{Hosts: []string{"127.0.0.1"}, Port: i, Proto: config.TCP})
 		a.NoError(b.Configure(ctx, cfg, false))
 		a.Equal(len(cfg.Tiers[0].Targets), b.p.Len())
 	}

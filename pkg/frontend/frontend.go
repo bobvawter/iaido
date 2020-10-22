@@ -49,7 +49,7 @@ type Frontend struct {
 		latch *latch.Latch
 		// A map of local listen addresses to the plumbing that handles
 		// the connectivity.
-		loops map[config.Target]*balanceLoop
+		loops map[string]*balanceLoop
 	}
 }
 
@@ -66,23 +66,23 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 	defer f.mu.Unlock()
 
 	if f.mu.loops == nil {
-		f.mu.loops = make(map[config.Target]*balanceLoop)
+		f.mu.loops = make(map[string]*balanceLoop)
 	}
 
 	if f.mu.latch == nil {
 		f.mu.latch = latch.New()
 	}
 
-	activeTargets := make(map[config.Target]bool)
+	activeTargets := make(map[string]bool)
 
 	for _, fe := range cfg.Frontends {
 		tgt, err := config.ParseTarget(fe.BindAddress)
 		if err != nil {
 			return errors.Wrapf(err, "could not bind %q", fe.BindAddress)
 		}
-		activeTargets[tgt] = true
+		activeTargets[tgt.String()] = true
 
-		bl := f.mu.loops[tgt]
+		bl := f.mu.loops[tgt.String()]
 		if bl == nil {
 			loopCtx, cancel := context.WithCancel(ctx)
 			bl = &balanceLoop{
@@ -90,16 +90,30 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 				cancel:   cancel,
 			}
 
-			if err := bl.balancer.Configure(loopCtx, &fe.BackendPool, true); err != nil {
+			if err := bl.balancer.Configure(loopCtx, fe.BackendPool, true); err != nil {
 				return errors.Wrapf(err, "could not configure backend pool for %q", fe.BindAddress)
 			}
 
-			f.mu.loops[tgt] = bl
+			f.mu.loops[tgt.String()] = bl
+
+			// Set up a loop to rebalance the pool (e.g. to reactivate
+			// disabled backends or prune overloaded nodes.)
+			go func(b *balancer.Balancer) {
+				ticker := time.NewTicker(time.Second)
+				for {
+					select {
+					case <-loopCtx.Done():
+						return
+					case <-ticker.C:
+						b.Rebalance(loopCtx)
+					}
+				}
+			}(bl.balancer)
 
 			switch tgt.Proto {
 			case config.TCP:
 				listener, err := net.ListenTCP("tcp", &net.TCPAddr{
-					IP:   net.ParseIP(tgt.Host),
+					IP:   net.ParseIP(tgt.Hosts[0]),
 					Port: tgt.Port,
 				})
 				if err != nil {
@@ -121,7 +135,7 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 			default:
 				panic(errors.Errorf("unimplemented: %s", tgt.Proto))
 			}
-		} else if err := bl.balancer.Configure(ctx, &fe.BackendPool, true); err != nil {
+		} else if err := bl.balancer.Configure(ctx, fe.BackendPool, true); err != nil {
 			return errors.Wrapf(err, "could not configure backend pool for %q", fe.BindAddress)
 		}
 
@@ -154,7 +168,7 @@ func (f *Frontend) MarshalJSON() ([]byte, error) {
 		payload.BuildInfo = info
 	}
 	for tgt, bl := range f.mu.loops {
-		payload.Listeners[tgt.String()] = bl.balancer
+		payload.Listeners[tgt] = bl.balancer
 	}
 	return json.Marshal(payload)
 }
@@ -162,10 +176,10 @@ func (f *Frontend) MarshalJSON() ([]byte, error) {
 // Wait for all active connections to drain.
 func (f *Frontend) Wait() {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	// Not started yet.
-	if f.mu.latch == nil {
-		return
+	latch := f.mu.latch
+	f.mu.Unlock()
+
+	if latch != nil {
+		latch.Wait()
 	}
-	f.mu.latch.Wait()
 }

@@ -2,6 +2,8 @@
 > A lightweight sidecar proxy for multi-region applications
 
 [![Build Status](https://travis-ci.org/bobvawter/iaido.svg?branch=main)](https://travis-ci.org/bobvawter/iaido)
+[![codecov](https://codecov.io/gh/bobvawter/iaido/branch/main/graph/badge.svg?token=B8C5YFH25N)](https://codecov.io/gh/bobvawter/iaido)
+[![Go Report Card](https://goreportcard.com/badge/github.com/bobvawter/iaido)](https://goreportcard.com/report/github.com/bobvawter/iaido)
 
 Iaido is intended to ease the way for organizations to adopt
 multi-region application architectures without needing to roll out a

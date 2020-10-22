@@ -33,8 +33,8 @@ func TestMinimalConfig(t *testing.T) {
 						{
 							Targets: []Target{
 								{
-									Host: "127.0.0.1",
-									Port: 8080,
+									Hosts: []string{"127.0.0.1"},
+									Port:  8080,
 								},
 							},
 						},

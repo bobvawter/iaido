@@ -85,7 +85,7 @@ func ParseTarget(target string) (Target, error) {
 	if err != nil {
 		return Target{}, errors.Wrapf(err, "could not parse target %q", target)
 	}
-	tgt.Host = host
+	tgt.Hosts = []string{host}
 	tgt.Port, err = strconv.Atoi(port)
 	if err != nil {
 		return Target{}, errors.Wrapf(err, "could not parse port number in target %q", target)
@@ -98,34 +98,40 @@ func ParseTarget(target string) (Target, error) {
 //
 // Targets are generally assumed to represent TCP/IP endpoints.
 type Target struct {
-	Host  string
-	Port  int
-	Proto Proto
+	Disabled bool
+	Hosts    []string
+	Port     int
+	Proto    Proto
 }
 
 // Resolve performs network name resolution.
 func (t Target) Resolve(ctx context.Context) ([]net.Addr, error) {
-	ips, err := Resolver.LookupIPAddr(ctx, t.Host)
-	if err != nil {
-		return nil, err
-	}
-	ret := make([]net.Addr, len(ips))
-	for i, ip := range ips {
-		switch t.Proto {
-		case TCP:
-			ret[i] = &net.TCPAddr{
-				IP:   ip.IP,
-				Port: t.Port,
-				Zone: ip.Zone,
+	ret := make([]net.Addr, 0, len(t.Hosts))
+
+	for _, host := range t.Hosts {
+		ips, err := Resolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		for _, ip := range ips {
+			var addr net.Addr
+			switch t.Proto {
+			case TCP:
+				addr = &net.TCPAddr{
+					IP:   ip.IP,
+					Port: t.Port,
+					Zone: ip.Zone,
+				}
+			case UDP:
+				addr = &net.UDPAddr{
+					IP:   ip.IP,
+					Port: t.Port,
+					Zone: ip.Zone,
+				}
+			default:
+				panic(fmt.Sprintf("unimplemented: %q", t))
 			}
-		case UDP:
-			ret[i] = &net.UDPAddr{
-				IP:   ip.IP,
-				Port: t.Port,
-				Zone: ip.Zone,
-			}
-		default:
-			panic(fmt.Sprintf("unimplemented: %q", t))
+			ret = append(ret, addr)
 		}
 	}
 	return ret, nil
@@ -133,8 +139,8 @@ func (t Target) Resolve(ctx context.Context) ([]net.Addr, error) {
 
 // Validate checks the value.
 func (t *Target) Validate() error {
-	if t.Host == "" {
-		return errors.Errorf("Host field is required")
+	if len(t.Hosts) == 0 {
+		return errors.Errorf("Hosts field is required")
 	}
 	if t.Port == 0 {
 		return errors.Errorf("Port field is required")
@@ -143,5 +149,5 @@ func (t *Target) Validate() error {
 }
 
 func (t Target) String() string {
-	return fmt.Sprintf("%s:%s:%d", t.Proto, t.Host, t.Port)
+	return fmt.Sprintf("%s:%s:%d", t.Proto, t.Hosts, t.Port)
 }
