@@ -29,7 +29,7 @@ func TestIgnore(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	addr, opt, err := Ignore()
+	addr, opt, err := Ignore(ctx)
 	if !a.NoError(err) {
 		return
 	}

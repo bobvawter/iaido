@@ -39,3 +39,8 @@ func TestLatch(t *testing.T) {
 	a.True(l.Wait())
 	a.Equal(0, l.Count())
 }
+
+func TestOverRelease(t *testing.T) {
+	a := assert.New(t)
+	a.PanicsWithError("cannot release zero-count Latch", func() { New().Release() })
+}

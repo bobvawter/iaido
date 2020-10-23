@@ -81,7 +81,9 @@ func (s *Loop) Start(ctx context.Context) {
 					continue
 				}
 				if err != nil {
-					log.Print(errors.Wrap(err, "server loop exiting"))
+					if ctx.Done() == nil {
+						log.Print(errors.Wrap(err, "server loop exiting"))
+					}
 					return
 				}
 				if latch != nil {

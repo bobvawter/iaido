@@ -16,7 +16,10 @@
 // foreknowledge of how many independent tasks there will be.
 package latch
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
 
 // Latch is a counter latch.
 //
@@ -54,7 +57,7 @@ func (l *Latch) Release() {
 	defer l.cond.L.Unlock()
 
 	if l.count == 0 {
-		panic("cannot release zero-count Latch")
+		panic(errors.New("cannot release zero-count Latch"))
 	}
 	l.count--
 	if l.count == 0 {

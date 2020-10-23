@@ -32,7 +32,7 @@ func Test(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	addr, opt, err := CharGen(count)
+	addr, opt, err := CharGen(ctx, count)
 	if !a.NoError(err) {
 		return
 	}

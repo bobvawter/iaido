@@ -25,11 +25,15 @@ import (
 var charBytes = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 // CharGen implements a trivial character-generation server.
-func CharGen(bytesToSend int) (net.Addr, loop.Option, error) {
+func CharGen(ctx context.Context, bytesToSend int) (net.Addr, loop.Option, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, nil, err
 	}
+	go func() {
+		<-ctx.Done()
+		_ = l.Close()
+	}()
 	tcp := l.(*net.TCPListener)
 	opt := loop.WithTCPHandler(tcp, func(ctx context.Context, conn *net.TCPConn) error {
 		for remaining := bytesToSend; remaining > 0; {

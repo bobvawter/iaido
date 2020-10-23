@@ -30,6 +30,7 @@ import (
 // Verify basic plumbing.
 func TestBalancerEndToEnd(t *testing.T) {
 	const backends = 16
+	const requestCount = 128
 	a := assert.New(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -40,7 +41,7 @@ func TestBalancerEndToEnd(t *testing.T) {
 	for i := range targets {
 		var opt loop.Option
 		opt, counters[i] = loop.WithConnectionCounter()
-		addr, cgOpt, err := it.CharGen(4096)
+		addr, cgOpt, err := it.CharGen(ctx, 4096)
 		if !a.NoError(err) {
 			return
 		}
@@ -53,14 +54,14 @@ func TestBalancerEndToEnd(t *testing.T) {
 	}
 
 	cfg := config.BackendPool{
-		DialFailureTimeout: "100ms",
+		DialFailureTimeout: "10s",
 		Tiers:              []config.Tier{{Targets: targets}},
 	}
 
 	b := &Balancer{}
 	a.NoError(b.Configure(ctx, cfg, false))
 
-	for i := 0; i < 4096; i++ {
+	for i := 0; i < requestCount; i++ {
 		checkBackend(ctx, a, b.Pick())
 	}
 
