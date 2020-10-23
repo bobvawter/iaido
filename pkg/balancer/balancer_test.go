@@ -54,8 +54,10 @@ func TestBalancerEndToEnd(t *testing.T) {
 	}
 
 	cfg := config.BackendPool{
-		DialFailureTimeout: "10s",
-		Tiers:              []config.Tier{{Targets: targets}},
+		Tiers: []config.Tier{{
+			DialFailureTimeout: 10 * time.Second,
+			Targets:            targets,
+		}},
 	}
 
 	b := &Balancer{}
@@ -89,8 +91,9 @@ func TestBalancerReconfigure(t *testing.T) {
 	defer cancel()
 
 	cfg := config.BackendPool{
-		DialFailureTimeout: "100ms",
-		Tiers:              []config.Tier{{}},
+		Tiers: []config.Tier{{
+			DialFailureTimeout: 10 * time.Second,
+		}},
 	}
 
 	b := &Balancer{}

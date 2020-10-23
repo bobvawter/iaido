@@ -23,6 +23,7 @@ import (
 
 	"github.com/bobvawter/iaido/pkg/loop"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/sync/errgroup"
 )
 
 func Test(t *testing.T) {
@@ -38,14 +39,48 @@ func Test(t *testing.T) {
 	}
 	loop.New(opt).Start(ctx)
 
-	conn, err := net.Dial(addr.Network(), addr.String())
+	runOneTest(a, addr, count)
+}
+
+func TestParallel(t *testing.T) {
+	const count = 1024
+	const workers = 16
+	const requests = 128
+
+	a := assert.New(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	addr, opt, err := CharGen(ctx, count)
 	if !a.NoError(err) {
 		return
+	}
+	loop.New(opt).Start(ctx)
+
+	group, _ := errgroup.WithContext(ctx)
+	for i := 0; i < workers; i++ {
+		group.Go(func() error {
+			for i := 0; i < requests; i++ {
+				if err := runOneTest(a, addr, count); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	a.NoError(group.Wait())
+}
+
+func runOneTest(a *assert.Assertions, addr net.Addr, count int) error {
+	conn, err := net.Dial(addr.Network(), addr.String())
+	if err != nil {
+		return err
 	}
 	defer conn.Close()
 
 	buf := make([]byte, 2048)
 	read, err := io.ReadAtLeast(conn, buf, count)
-	a.NoError(err)
 	a.Equal(count, read)
+	return err
 }

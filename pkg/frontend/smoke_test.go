@@ -29,6 +29,7 @@ import (
 	"github.com/bobvawter/iaido/pkg/loop"
 	it "github.com/bobvawter/iaido/pkg/testing"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 // This is an end-to-end smoke test of the Iaido proxy.
@@ -43,7 +44,9 @@ func TestSmoke(t *testing.T) {
 	defer cancel()
 
 	backends := make([]*CharGenServer, backendCount)
-	tier := config.Tier{}
+	tier := config.Tier{
+		DialFailureTimeout: 10 * time.Second,
+	}
 	for i := range backends {
 		var err error
 		backends[i], err = startChargen(ctx, payloadSize)
@@ -61,11 +64,10 @@ func TestSmoke(t *testing.T) {
 		Frontends: []config.Frontend{
 			{
 				BackendPool: config.BackendPool{
-					DialFailureTimeout: "10s",
-					Tiers:              []config.Tier{tier},
+					Tiers: []config.Tier{tier},
 				},
 				BindAddress:  ":13013",
-				IdleDuration: "1m",
+				IdleDuration: time.Minute,
 			},
 		},
 	}
@@ -106,7 +108,7 @@ func TestSmoke(t *testing.T) {
 	}
 	a.Equal(requestCount, int(count))
 
-	data, err := fe.MarshalJSON()
+	data, err := yaml.Marshal(&fe)
 	a.NoError(err)
 	log.Print(string(data))
 }

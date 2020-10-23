@@ -23,6 +23,9 @@ import (
 )
 
 // Capture is a trivial server that will accept connections and capture the bytes.
+//
+// Note that access to dest is not synchronized and may be written to
+// from multiple goroutines simultaneously.
 func Capture(ctx context.Context, dest io.Writer) (net.Addr, loop.Option, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

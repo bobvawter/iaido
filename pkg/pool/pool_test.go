@@ -14,14 +14,16 @@
 package pool_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"testing"
-
-	"encoding/json"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/bobvawter/iaido/pkg/pool"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 type trivial struct {
@@ -31,8 +33,8 @@ type trivial struct {
 	tier     int
 }
 
-func (t *trivial) MarshalJSON() ([]byte, error) {
-	return json.Marshal(t.name)
+func (t *trivial) MarshalYAML() (interface{}, error) {
+	return t.name, nil
 }
 
 func (t *trivial) String() string {
@@ -64,16 +66,46 @@ func TestAddIdempotent(t *testing.T) {
 	a.Equal(1, p.Len())
 	p.Add(e)
 	a.Equal(1, p.Len())
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	picked, err := p.Wait(ctx)
+	a.Same(e, picked)
+	a.NoError(err)
 }
 
-func TestEmptyPool(t *testing.T) {
+func TestEmptyPoolWait(t *testing.T) {
 	a := assert.New(t)
 	var p pool.Pool
 	a.Nil(p.Pick())
 	a.Equal(0, p.Len())
+
+	ch := make(chan pool.Entry, 1)
+	go func() {
+		picked, err := p.Wait(context.Background())
+		a.NoError(err)
+		a.NotNil(picked)
+		ch <- picked
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	picked, err := p.Wait(ctx)
+	a.Nil(picked)
+	a.True(errors.Is(err, context.DeadlineExceeded))
+
+	p.Add(&trivial{})
+	p.Rebalance()
+
+	select {
+	case picked := <-ch:
+		a.NotNil(picked)
+	case <-time.NewTimer(time.Second).C:
+		a.Fail("timeout")
+	}
 }
 
-func TestMarshalJSON(t *testing.T) {
+func TestMarshalYAML(t *testing.T) {
 	a := assert.New(t)
 
 	e0 := &trivial{name: "e0", load: 2}
@@ -86,8 +118,7 @@ func TestMarshalJSON(t *testing.T) {
 	p.Pick()
 
 	var sb strings.Builder
-	e := json.NewEncoder(&sb)
-	e.SetIndent("", "  ")
+	e := yaml.NewEncoder(&sb)
 	a.NoError(e.Encode(&p))
 	t.Log(sb.String())
 }
@@ -102,6 +133,8 @@ func TestRemove(t *testing.T) {
 	p.Add(e0)
 	p.Add(e1)
 	a.Equal(2, p.Len())
+	a.Contains(p.All(), e0)
+	a.Contains(p.All(), e1)
 
 	a.Same(e0, p.Pick())
 

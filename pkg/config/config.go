@@ -15,29 +15,30 @@
 package config
 
 import (
-	"encoding/json"
+	"io"
 	"time"
 
-	"io"
-
 	"github.com/pkg/errors"
+	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level JSON-compatible configuration.
+// Config is the top-level YAML-compatible configuration.
 type Config struct {
-	Frontends []Frontend
+	// A local address to bind a diagnostic HTTP endpoint to.
+	DiagAddr    string        `yaml:"diagAddr"`
+	Frontends   []Frontend    `yaml:"frontends"`
+	GracePeriod time.Duration `yaml:"gracePeriod"`
 }
 
-// ParseConfig parses and validates a serialized JSON representation of
+// DecodeConfig parses and validates a serialized YAML representation of
 // a Config.
-func ParseConfig(reader io.Reader) (*Config, error) {
-	ret := &Config{}
-	d := json.NewDecoder(reader)
-	d.DisallowUnknownFields()
-	if err := d.Decode(ret); err != nil {
-		return nil, err
+func DecodeConfig(reader io.Reader, cfg *Config) error {
+	d := yaml.NewDecoder(reader)
+	d.KnownFields(true)
+	if err := d.Decode(cfg); err != nil {
+		return err
 	}
-	return ret, ret.Validate()
+	return cfg.Validate()
 }
 
 // Validate checks the value.
@@ -52,10 +53,11 @@ func (c *Config) Validate() error {
 
 // Frontend represents an active proxy frontend.
 type Frontend struct {
-	BackendPool         BackendPool
-	BindAddress         string
-	IncomingConnections int
-	IdleDuration        string
+	BackendPool BackendPool `yaml:"backendPool"`
+	// The local address to listen for incoming connections on.
+	BindAddress string `yaml:"bindAddress"`
+	// The time after which an idle connection should be pruned.
+	IdleDuration time.Duration `yaml:"idleDuration"`
 }
 
 // Validate checks the value.
@@ -65,33 +67,22 @@ func (f *Frontend) Validate() error {
 	} else if _, err := ParseTarget(f.BindAddress); err != nil {
 		return errors.Wrapf(err, "bad BindAddress")
 	}
-	if f.IncomingConnections == 0 {
-		f.IncomingConnections = 1024
-	}
-	if f.IdleDuration == "" {
-		f.IdleDuration = "1h"
-	} else if _, err := time.ParseDuration(f.IdleDuration); err != nil {
-		return errors.Wrapf(err, "bad IdleDuration")
+	if f.IdleDuration == 0 {
+		f.IdleDuration = time.Hour
 	}
 	return f.BackendPool.Validate()
 }
 
 // BackendPool represents the actual machines to connect to.
 type BackendPool struct {
-	DialFailureTimeout    string
-	MaxBackendConnections int
-	Tiers                 []Tier
+	// Backends are arranged in tiers with a "fill and spill" behavior.
+	Tiers []Tier `yaml:"tiers"`
 }
 
 // Validate checks the value.
 func (b *BackendPool) Validate() error {
 	if len(b.Tiers) == 0 {
 		return errors.New("Tiers must not be empty")
-	}
-	if b.DialFailureTimeout == "" {
-		b.DialFailureTimeout = "30s"
-	} else if _, err := time.ParseDuration(b.DialFailureTimeout); err != nil {
-		return errors.Wrapf(err, "bad DialFailureTimeout")
 	}
 	for i := range b.Tiers {
 		if err := b.Tiers[i].Validate(); err != nil {
@@ -103,11 +94,21 @@ func (b *BackendPool) Validate() error {
 
 // Tier contains the targets that the frontend will forward connections to.
 type Tier struct {
-	Targets []Target
+	// How long to disable a backend if a connection cannot be established.
+	DialFailureTimeout time.Duration `yaml:"dialFailureTimeout"`
+	// If non-zero, connections to this tier will be forcefully
+	// disconnected if a backend in a closer tier becomes available.
+	ForcePromotionAfter time.Duration `yaml:"forcePromotionAfter"`
+	// The maximum number of connections to make to any given backend.
+	MaxBackendConnections int      `yaml:"maxBackendConnections"`
+	Targets               []Target `yaml:"targets"`
 }
 
 // Validate checks the value.
 func (t *Tier) Validate() error {
+	if t.DialFailureTimeout == 0 {
+		t.DialFailureTimeout = time.Second
+	}
 	for i := range t.Targets {
 		if err := t.Targets[i].Validate(); err != nil {
 			return errors.Wrapf(err, "Targets[%d]", i)

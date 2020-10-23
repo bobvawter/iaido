@@ -1,0 +1,55 @@
+# This is a trivial configuration that presents a geo-distributed
+# CockroachDB cluster as a unified endpoint.
+diagAddr: :6060
+frontends:
+  - bindAddress: :26257
+    idleDuration: 5m
+    backendPool:
+      tiers:
+        - maxBackendConnections: 64
+          targets:
+            - hosts: # East
+                - 10.142.0.51
+                - 10.142.0.52
+                - 10.142.0.54
+              port: 26257
+        - maxBackendConnections: 32
+          forcePromotionAfter: 1m
+          targets:
+            - hosts: # West
+                - 10.138.0.43
+                - 10.138.0.87
+                - 10.138.0.48
+              port: 26257
+        - maxBackendConnections: 8
+          forcePromotionAfter: 15s
+          targets:
+            - hosts: # Europe
+                - 10.154.0.8
+                - 10.154.0.13
+                - 10.154.0.70
+              port: 26257
+
+  - bindAddress: :8080
+    idleDuration: 5m
+    backendPool:
+      tiers:
+        - targets:
+            - hosts: # East
+                - 10.142.0.51
+                - 10.142.0.52
+                - 10.142.0.54
+              port: 26258
+        - targets:
+            - hosts: # West
+                - 10.138.0.43
+                - 10.138.0.87
+                - 10.138.0.48
+              port: 26258
+        - targets:
+            - hosts: # Europe
+                - 10.154.0.8
+                - 10.154.0.13
+                - 10.154.0.70
+              port: 26258
+gracePeriod: 5s

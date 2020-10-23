@@ -15,7 +15,6 @@ package loop
 
 import (
 	"context"
-	"math"
 	"net"
 	"sync/atomic"
 
@@ -45,17 +44,17 @@ func (c *connectionCounter) onConnection(context.Context) {
 	atomic.AddUint64(&c.ctr, 1)
 }
 
-// WithMaxWorkers limits the total number of active incoming connections.
-func WithMaxWorkers(count int) Option {
-	if count == 0 {
-		count = math.MaxInt32
-	}
-	return maxWorkers(count)
+// WithPreflight registers a function that may block acceptance of
+// incoming connections.
+func WithPreflight(fn func(context.Context) error) Option {
+	return &preflight{fn}
 }
 
-type maxWorkers int
+type preflight struct {
+	fn func(context.Context) error
+}
 
-func (maxWorkers) onConnection(context.Context) {}
+func (*preflight) onConnection(context.Context) {}
 
 // WithLatch will inject a Latch that is held whenever a
 // connection is active.  This allows callers to implement a graceful

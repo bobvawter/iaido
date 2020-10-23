@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sync"
+
 	"github.com/bobvawter/iaido/pkg/balancer"
 	"github.com/bobvawter/iaido/pkg/copier"
 	"github.com/bobvawter/iaido/pkg/loop"
@@ -62,80 +64,95 @@ func proxy(
 	incoming, outgoing *net.TCPConn,
 	idleDuration time.Duration,
 ) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	const connectionSampleTime = time.Second
 
-	group, ctx := errgroup.WithContext(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	errGroup, ctx := errgroup.WithContext(ctx)
 
 	// This sets up an idle-detection loop.
-	var activeAt atomic.Value
-	activeAt.Store(time.Now().Add(idleDuration))
-	activity := func(int64) {
-		activeAt.Store(time.Now())
+	var idleSince atomic.Value
+	idleSince.Store(time.Time{})
+	activity := func(written int64) {
+		if written == 0 {
+			idleSince.Store(time.Now())
+		} else {
+			idleSince.Store(time.Time{})
+		}
 	}
 
-	group.Go(func() error {
+	// Maintenance tasks:
+	// * Shed load on overloaded backends
+	// * Shed load if a better backend has been avilable for some time
+	// * Enforce idleness timeout
+	errGroup.Go(func() error {
+		// Capture
+		idleDuration := idleDuration
+		ticker := time.NewTicker(connectionSampleTime)
+		var promotionAvailableSince time.Time
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.NewTimer(idleDuration).C:
-				if time.Now().After(activeAt.Load().(time.Time).Add(idleDuration)) {
-					return errors.Errorf("idle timeout (%s) exceeded %s -> %s", idleDuration, incoming.RemoteAddr(), outgoing.RemoteAddr())
-				}
-			}
-		}
-	})
-
-	group.Go(func() error {
-		maybeForce := backend.Tier() > 0
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.NewTimer(time.Second).C:
-				// Try to force clients back to a higher tier down to a
-				// reasonable minimum for highly-active flows.
-				if maybeForce {
-					if better := balancer.Pick(); better != nil && better.Tier() < backend.Tier() {
-						maybeForce = false
-						idleDuration = 10 * time.Millisecond
-					}
-				}
+			case <-ticker.C:
 				if backend.ShedLoad() {
 					return errors.Errorf("shedding load %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
+				}
+
+				if backend.Tier() > 0 && backend.ForcePromotionAfter() != 0 {
+					if better := balancer.Pick(); better != nil && better.Tier() < backend.Tier() {
+						if promotionAvailableSince.IsZero() {
+							promotionAvailableSince = time.Now()
+						} else if time.Now().After(promotionAvailableSince.Add(backend.ForcePromotionAfter())) {
+							return errors.Errorf("forcing promotion of %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
+						}
+					} else {
+						promotionAvailableSince = time.Time{}
+					}
+				}
+
+				when := idleSince.Load().(time.Time)
+				if !when.IsZero() && time.Now().After(when.Add(idleDuration)) {
+					return errors.Errorf("closing idle connection %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
 				}
 			}
 		}
 	})
 
 	// Copy incoming data to outgoing connection.
-	group.Go(func() error {
+	var copyGroup sync.WaitGroup
+	copyGroup.Add(2)
+	errGroup.Go(func() error {
 		err := (&copier.Copier{
-			From:     incoming,
-			To:       outgoing,
-			Activity: activity,
+			Activity:   activity,
+			From:       incoming,
+			To:         outgoing,
+			WakePeriod: connectionSampleTime,
 		}).Copy(ctx)
 		_ = incoming.CloseRead()
 		_ = outgoing.CloseWrite()
-		cancel()
+		copyGroup.Done()
 		return err
 	})
 
 	// Copy returning data back to client.
-	group.Go(func() error {
+	errGroup.Go(func() error {
 		err := (&copier.Copier{
-			From:     outgoing,
-			To:       incoming,
-			Activity: activity,
+			Activity:   activity,
+			From:       outgoing,
+			To:         incoming,
+			WakePeriod: connectionSampleTime,
 		}).Copy(ctx)
 		_ = outgoing.CloseRead()
 		_ = incoming.CloseWrite()
-		cancel()
+		copyGroup.Done()
 		return err
 	})
 
-	err := group.Wait()
+	copyGroup.Wait()
+	cancel()
+
+	err := errGroup.Wait()
 	if errors.Is(err, context.Canceled) {
 		err = nil
 	}

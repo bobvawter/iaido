@@ -25,6 +25,7 @@ lint: generate
 test: generate
 	go vet ./...
 	go test -v -race -coverprofile=coverage.txt ./...
+	find configs -name *.yaml -print0 | xargs -0 -L1 -t go run github.com/bobvawter/iaido/cmd/iaido --check -c
 
 release: fmt lint test build
 

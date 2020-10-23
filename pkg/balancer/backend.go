@@ -15,7 +15,6 @@ package balancer
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"math/rand"
 	"net"
@@ -24,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"gopkg.in/yaml.v3"
 )
 
 // Key is a typesafe Context key.
@@ -43,11 +43,12 @@ type Backend struct {
 		dialTimeout time.Duration
 		// This field can be set via configuration to pull a backend from
 		// service.
-		disabled        bool
-		disableDuration time.Duration
-		disabledUntil   time.Time
-		maxConnections  int
-		tier            int
+		disabled            bool
+		disableDuration     time.Duration
+		disabledUntil       time.Time
+		forcePromotionAfter time.Duration
+		maxConnections      int
+		tier                int
 	}
 	atomic struct {
 		openConns int32
@@ -107,26 +108,37 @@ func (b *Backend) Disabled() bool {
 	return time.Now().Before(when)
 }
 
+// ForcePromotionAfter indicates that clients should be forcefully
+// disconnected from this backend if a better choice is available.
+func (b *Backend) ForcePromotionAfter() time.Duration {
+	b.mu.RLock()
+	ret := b.mu.forcePromotionAfter
+	b.mu.RUnlock()
+	return ret
+}
+
 // Load implements pool.Entry and reflects the number of concurrent
 // calls to Dial().
 func (b *Backend) Load() int {
 	return int(atomic.LoadInt32(&b.atomic.openConns))
 }
 
-// MarshalJSON implements json.Marshaler and provides a diagnostic
-// view of the Backend.
-func (b *Backend) MarshalJSON() ([]byte, error) {
+// MarshalYAML implements yaml.Marshaler interfare and provides a
+// diagnostic view of the Backend.
+func (b *Backend) MarshalYAML() (interface{}, error) {
 	payload := struct {
-		Address         string
-		Disabled        bool
-		DisabledUntil   *time.Time
-		OpenConnections int
-		Tier            int
+		Address              string
+		Disabled             bool
+		DisabledUntil        *time.Time    `yaml:"disabledUntil"`
+		ForcePromotionsAfter time.Duration `yaml:"forcePromotionsAfter"`
+		OpenConnections      int           `yaml:"openConnections"`
+		Tier                 int
 	}{
-		Address:         b.addr.String(),
-		Disabled:        b.Disabled(),
-		OpenConnections: b.Load(),
-		Tier:            b.Tier(),
+		Address:              b.addr.String(),
+		Disabled:             b.Disabled(),
+		ForcePromotionsAfter: b.ForcePromotionAfter(),
+		OpenConnections:      b.Load(),
+		Tier:                 b.Tier(),
 	}
 	if b.Disabled() {
 		b.mu.RLock()
@@ -134,7 +146,7 @@ func (b *Backend) MarshalJSON() ([]byte, error) {
 		b.mu.RUnlock()
 		payload.DisabledUntil = &when
 	}
-	return json.Marshal(payload)
+	return payload, nil
 }
 
 // ShedLoad provides advice to flows through the Backend as to whether
@@ -169,7 +181,7 @@ func (b *Backend) ShedLoad() bool {
 }
 
 func (b *Backend) String() string {
-	bytes, _ := b.MarshalJSON()
+	bytes, _ := yaml.Marshal(b)
 	return string(bytes)
 }
 

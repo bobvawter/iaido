@@ -16,29 +16,31 @@
 package diagnostics
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 
 	// Also use the default pprof handlers
 	_ "net/http/pprof"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ListenAndServe configures the default HTTP mux with pprof and
-// additional endpoints for retrieving JSON objects.
+// additional endpoints for retrieving YAML objects.
 func ListenAndServe(bind string, elts map[string]interface{}) error {
 	for k, v := range elts {
 		// Capture vars.
 		k, v := k, v
 		http.HandleFunc(k, func(writer http.ResponseWriter, request *http.Request) {
-			writer.Header().Add("content-type", "application/json")
+			writer.Header().Add("content-type", "text/plain; charset=UTF-8")
 			writer.WriteHeader(http.StatusOK)
-			enc := json.NewEncoder(writer)
-			enc.SetIndent("", "  ")
+			enc := yaml.NewEncoder(writer)
 
 			if err := enc.Encode(v); err != nil {
 				log.Printf("could not serve %s: %v", k, err)
+			} else {
+				_ = enc.Close()
 			}
 		})
 
