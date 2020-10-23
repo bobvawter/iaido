@@ -2,8 +2,9 @@
   "Frontends": [
     {
       "BindAddress": ":26257",
+      "IdleDuration": "5m",
       "BackendPool": {
-        "MaxBackendConnections": 32,
+        "MaxBackendConnections": 128,
         "Tiers": [
           {
             "Targets": [

@@ -73,6 +73,10 @@ func (q *entryPQueue) add(entry Entry) *entryMeta {
 	return ret
 }
 
+func (q *entryPQueue) remove(meta *entryMeta) {
+	heap.Remove(q, meta.index)
+}
+
 func (q *entryPQueue) update(meta *entryMeta, mark uint64) {
 	meta.disabled = meta.Disabled()
 	meta.load = meta.Load()
@@ -88,8 +92,4 @@ func (q *entryPQueue) updateAll() {
 		meta.tier = meta.Tier()
 	}
 	heap.Init(q)
-}
-
-func (q *entryPQueue) remove(meta *entryMeta) {
-	heap.Remove(q, meta.index)
 }

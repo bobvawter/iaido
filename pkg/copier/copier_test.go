@@ -24,57 +24,89 @@ import (
 	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
 	it "github.com/bobvawter/iaido/pkg/testing"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
 // This is a simple smoke-test to validate end-to-end reception.
-func TestCopierHappyPath(t *testing.T) {
-	const numChars = 1024 * 1024
+func TestCopier(t *testing.T) {
+	const numChars = 10 * 1024 * 1024
 	a := assert.New(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	cgAddr, cgOpt, err := it.CharGen(numChars)
+	cgAddr, cgOpt, err := it.CharGen(ctx, numChars)
 	if !a.NoError(err) {
 		return
 	}
 	loop.New(cgOpt).Start(ctx)
 
-	cgConn, err := net.Dial(cgAddr.Network(), cgAddr.String())
-	if !a.NoError(err) {
-		return
-	}
-
 	var sink bytes.Buffer
 	l := latch.New()
-	sinkAddr, opt, err := it.Capture(&sink)
+	sinkAddr, opt, err := it.Capture(ctx, &sink)
 	if !a.NoError(err) {
 		return
 	}
 	loop.New(opt, loop.WithLatch(l)).Start(ctx)
 
-	sinkConn, err := net.Dial(sinkAddr.Network(), sinkAddr.String())
-	if !a.NoError(err) {
-		return
-	}
+	t.Run("HappyPath", func(t *testing.T) {
+		a := assert.New(t)
 
-	var totalRead uint32
-	var totalWrite uint32
+		cgConn, err := net.Dial(cgAddr.Network(), cgAddr.String())
+		if !a.NoError(err) {
+			return
+		}
+		sinkConn, err := net.Dial(sinkAddr.Network(), sinkAddr.String())
+		if !a.NoError(err) {
+			return
+		}
+		var totalWrite int64
 
-	activity := func(read, write int) {
-		atomic.AddUint32(&totalRead, uint32(read))
-		atomic.AddUint32(&totalWrite, uint32(write))
-	}
+		activity := func(write int64) {
+			atomic.AddInt64(&totalWrite, write)
+		}
 
-	c := &Copier{
-		From:     cgConn,
-		To:       sinkConn,
-		Activity: activity,
-		Linger:   10 * time.Millisecond,
-	}
-	a.NoError(c.Copy(ctx))
-	l.Wait()
-	a.Equal(numChars, int(atomic.LoadUint32(&totalRead)))
-	a.Equal(numChars, int(atomic.LoadUint32(&totalWrite)))
-	a.Equal(numChars, sink.Len())
+		c := &Copier{
+			From:     cgConn,
+			To:       sinkConn,
+			Activity: activity,
+		}
+		a.NoError(c.Copy(ctx))
+		_ = cgConn.Close()
+		_ = sinkConn.Close()
+
+		l.Wait()
+		a.Equal(numChars, int(atomic.LoadInt64(&totalWrite)))
+		a.Equal(numChars, sink.Len())
+	})
+
+	// Ensure that the context-checking deadline fires.
+	t.Run("WithCancel", func(t *testing.T) {
+		a := assert.New(t)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		cgConn, err := net.Dial(cgAddr.Network(), cgAddr.String())
+		if !a.NoError(err) {
+			return
+		}
+		sinkConn, err := net.Dial(sinkAddr.Network(), sinkAddr.String())
+		if !a.NoError(err) {
+			return
+		}
+
+		activity := func(write int64) {
+			cancel()
+		}
+
+		c := &Copier{
+			From:       cgConn,
+			To:         sinkConn,
+			Activity:   activity,
+			WakePeriod: 1 * time.Millisecond, // Force context wakeups.
+		}
+		a.True(errors.Is(c.Copy(ctx), context.Canceled))
+		_ = cgConn.Close()
+		_ = sinkConn.Close()
+	})
 }

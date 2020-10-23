@@ -21,11 +21,15 @@ import (
 )
 
 // Ignore returns a server that does not read from its connection.
-func Ignore(options ...loop.Option) (net.Addr, loop.Option, error) {
+func Ignore(ctx context.Context) (net.Addr, loop.Option, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, nil, err
 	}
+	go func() {
+		<-ctx.Done()
+		_ = l.Close()
+	}()
 	tcp := l.(*net.TCPListener)
 	opt := loop.WithTCPHandler(tcp, func(ctx context.Context, conn *net.TCPConn) error {
 		<-ctx.Done()

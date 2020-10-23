@@ -71,7 +71,7 @@ func (b *Backend) Dial(ctx context.Context, fn func(context.Context, net.Conn) e
 		return true, errors.Errorf("reached maximum connection count of %d", maxConns)
 	}
 
-	conn, err := net.Dial(b.addr.Network(), b.addr.String())
+	conn, err := net.DialTimeout(b.addr.Network(), b.addr.String(), dialTimeout)
 	if err != nil {
 		b.DisableFor(dialTimeout)
 		return true, err

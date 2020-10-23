@@ -32,7 +32,7 @@ func TestCapture(t *testing.T) {
 	defer cancel()
 
 	var buf bytes.Buffer
-	addr, opt, err := Capture(&buf)
+	addr, opt, err := Capture(ctx, &buf)
 	if !a.NoError(err) {
 		return
 	}

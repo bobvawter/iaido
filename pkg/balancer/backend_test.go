@@ -30,7 +30,7 @@ func TestBackend(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	addr, opt, err := it.CharGen(4096)
+	addr, opt, err := it.CharGen(ctx, 4096)
 	if !a.NoError(err) {
 		return
 	}

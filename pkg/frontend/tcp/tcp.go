@@ -68,10 +68,9 @@ func proxy(
 	group, ctx := errgroup.WithContext(ctx)
 
 	// This sets up an idle-detection loop.
-	var activity func(int, int)
 	var activeAt atomic.Value
 	activeAt.Store(time.Now().Add(idleDuration))
-	activity = func(read, written int) {
+	activity := func(int64) {
 		activeAt.Store(time.Now())
 	}
 
