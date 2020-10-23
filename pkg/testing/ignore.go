@@ -31,7 +31,7 @@ func Ignore(ctx context.Context) (net.Addr, loop.Option, error) {
 		_ = l.Close()
 	}()
 	tcp := l.(*net.TCPListener)
-	opt := loop.WithTCPHandler(tcp, func(ctx context.Context, conn *net.TCPConn) error {
+	opt := loop.WithHandler(tcp, func(ctx context.Context, conn net.Conn) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})

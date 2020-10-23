@@ -15,7 +15,6 @@ package balancer
 
 import (
 	"context"
-	"net"
 	"testing"
 	"time"
 
@@ -39,42 +38,15 @@ func TestBackend(t *testing.T) {
 	b := &Backend{
 		addr: addr,
 	}
+	b.mu.maxConnections = 2
 	b.mu.tier = 2
-	a.Equal(0, b.Load())
 	a.Equal(2, b.Tier())
-	a.False(b.Disabled())
+	a.Equal(2, b.MaxLoad())
 	t.Log(b)
 
-	_, err = b.Dial(ctx, func(ctx context.Context, conn net.Conn) error {
-		a.Same(b, ctx.Value(KeyBackend))
-		a.Equal(1, b.Load())
-		return nil
-	})
-	a.NoError(err)
-	a.Equal(0, b.Load())
-
 	b.DisableFor(time.Hour)
-	a.True(b.Disabled())
+	a.Equal(0, b.MaxLoad())
 
 	b.DisableFor(0)
-	a.False(b.Disabled())
-}
-
-// Determine that a backend self-disables when it's unable to dial.
-func TestBackendToNowhere(t *testing.T) {
-	a := assert.New(t)
-	b := &Backend{
-		addr: &net.TCPAddr{
-			IP:   []byte{127, 0, 0, 1},
-			Port: 2,
-		},
-	}
-	b.mu.dialTimeout = time.Second
-
-	retry, err := b.Dial(context.Background(), func(ctx context.Context, conn net.Conn) error {
-		return nil
-	})
-	a.True(retry)
-	a.NotNil(err)
-	a.True(b.Disabled())
+	a.Equal(2, b.MaxLoad())
 }

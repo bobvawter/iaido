@@ -43,8 +43,8 @@ func New(options ...Option) *Loop {
 // This method is non-blocking and will spawn additional goroutines.
 func (s *Loop) Start(ctx context.Context) {
 	toLatch := latch.New()
-	var tcpLoops []*tcpHandler
-	wait := func(ctx context.Context) error { return ctx.Err() }
+	var handlers []*handler
+	wait := func(ctx context.Context) (context.Context, error) { return ctx, ctx.Err() }
 
 	// Filter out "static" options.
 	n := 0
@@ -52,8 +52,8 @@ func (s *Loop) Start(ctx context.Context) {
 		switch t := opt.(type) {
 		case *preflight:
 			wait = t.fn
-		case *tcpHandler:
-			tcpLoops = append(tcpLoops, t)
+		case *handler:
+			handlers = append(handlers, t)
 		case withLatch:
 			toLatch = t.latch
 		default:
@@ -63,15 +63,19 @@ func (s *Loop) Start(ctx context.Context) {
 	}
 	s.options = s.options[:n]
 
-	for _, tcp := range tcpLoops {
-		go func(tcp *tcpHandler) {
+	for _, h := range handlers {
+		go func(h *handler) {
 			for {
-				if err := wait(ctx); err != nil {
+				reqContext, err := wait(ctx)
+				if err != nil {
 					log.Print(errors.Wrapf(err, "server loop exiting"))
 					return
 				}
-				_ = tcp.listener.SetDeadline(time.Now().Add(1 * time.Second))
-				conn, err := tcp.listener.AcceptTCP()
+
+				if x, ok := h.listener.(interface{ SetDeadline(time.Time) error }); ok {
+					_ = x.SetDeadline(time.Now().Add(1 * time.Second))
+				}
+				conn, err := h.listener.Accept()
 				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
 					continue
 				}
@@ -79,25 +83,24 @@ func (s *Loop) Start(ctx context.Context) {
 					log.Print(errors.Wrap(err, "server loop exiting"))
 					return
 				}
-				toLatch.Hold()
-				go processConnection(ctx, toLatch, tcp, conn, s.options)
-			}
-		}(tcp)
-	}
-}
 
-func processConnection(
-	ctx context.Context, l *latch.Latch,
-	tcp *tcpHandler, conn *net.TCPConn, options []Option,
-) {
-	defer l.Release()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	for i := range options {
-		options[i].onConnection(ctx)
+				reqContext, cancel := context.WithCancel(reqContext)
+				for i := range s.options {
+					if x, ok := s.options[i].(interface{ onConnection(context.Context) }); ok {
+						x.onConnection(reqContext)
+					}
+				}
+
+				toLatch.Hold()
+				go func() {
+					if err := h.fn(reqContext, conn); err != nil {
+						log.Printf("handler error %v", err)
+					}
+					_ = conn.Close()
+					cancel()
+					toLatch.Release()
+				}()
+			}
+		}(h)
 	}
-	if err := tcp.fn(ctx, conn); err != nil {
-		log.Printf("handler error %v", err)
-	}
-	_ = conn.Close()
 }

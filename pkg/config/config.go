@@ -75,12 +75,20 @@ func (f *Frontend) Validate() error {
 
 // BackendPool represents the actual machines to connect to.
 type BackendPool struct {
+	// How often connections within the pool should be evaluated for
+	// over-load conditions, promotion to a higher tier, etc.
+	// Longer values provide better damping of behavior, at the cost
+	// of simply taking more time to effect configuration changes.
+	MaintenanceTime time.Duration `yaml:"maintenanceTime"`
 	// Backends are arranged in tiers with a "fill and spill" behavior.
 	Tiers []Tier `yaml:"tiers"`
 }
 
 // Validate checks the value.
 func (b *BackendPool) Validate() error {
+	if b.MaintenanceTime == 0 {
+		b.MaintenanceTime = 30 * time.Second
+	}
 	if len(b.Tiers) == 0 {
 		return errors.New("Tiers must not be empty")
 	}

@@ -36,11 +36,8 @@ func Capture(ctx context.Context, dest io.Writer) (net.Addr, loop.Option, error)
 		_ = l.Close()
 	}()
 	tcp := l.(*net.TCPListener)
-	opt := loop.WithTCPHandler(tcp, func(ctx context.Context, conn *net.TCPConn) error {
+	opt := loop.WithHandler(tcp, func(ctx context.Context, conn net.Conn) error {
 		log.Printf("recording data from %s", conn.RemoteAddr())
-		if err := conn.CloseWrite(); err != nil {
-			return err
-		}
 		_, err := io.Copy(dest, conn)
 		return err
 	})

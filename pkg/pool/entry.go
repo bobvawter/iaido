@@ -15,19 +15,23 @@ package pool
 
 // An Entry represents something that can be picked out of a Pool.
 type Entry interface {
-	// Disabled should return true if the entry is currently ineligible
-	// to be returned from Pick.
-	Disabled() bool
-	// Load represents a weighting within a tier. Entries with lower
-	// load values are given higher priority when selecting an entry.
-	Load() int
-	// Tier establishes an equivalence class within the pool.
+	// MaxLoad allows an entry to specify the number of times that it
+	// can be concurrently picked from the pool.
+	//
+	// The MaxLoad value will be re-checked when an Entry is about to be
+	// picked, which provides callers with the opportunity to provide
+	// dynamic admission control.
+	//
+	// If MaxLoad() is less than 1, the Entry can no longer be picked,
+	// however this will not invalidate any currently-issued Tokens.
+	MaxLoad() int
+	// Tier establishes equivalence classes within the pool.
 	// Lower-numbered tiers are given higher priority when selecting an
 	// entry.
 	Tier() int
 }
 
-// entryMeta associates additional metadata with a user-provide Entry.
+// entryMeta associates additional metadata with a user-provided Entry.
 //
 // This type contains snapshots of the information that we gather
 // from the user-provided Entry in order to ensure stability during
@@ -35,45 +39,56 @@ type Entry interface {
 type entryMeta struct {
 	Entry
 
-	// Snapshot of Disabled().
-	disabled bool
 	// This is the internal index used by the heap package.
 	index int
-	// Snapshot of Load().
+	// The current number of tokens outstanding for the entry.
 	load int
 	// Record when the entry was last chosen to create a round-robin
 	// effect.
-	mark uint64
+	mark mark
+	// Snapshot of MaxLoad().
+	maxLoad int
 	// Snapshot of Tier().
 	tier int
 }
 
+// A mark is used as a selection counter to provide a basic round-robin
+// behavior, presuming all other weighting concerns are equal.
+type mark uint64
+
 func (e *entryMeta) MarshalYAML() (interface{}, error) {
 	payload := struct {
-		Disabled bool
-		Entry    interface{}
-		Load     int
-		Mark     uint64
-		Tier     int
+		Entry   interface{}
+		Load    int
+		Mark    mark
+		MaxLoad int
+		Tier    int
 	}{
-		Disabled: e.disabled,
-		Entry:    e.Entry,
-		Load:     e.load,
-		Mark:     e.mark,
-		Tier:     e.tier,
+		Entry:   e.Entry,
+		Load:    e.load,
+		Mark:    e.mark,
+		MaxLoad: e.maxLoad,
+		Tier:    e.tier,
 	}
 	return payload, nil
 }
 
 func (e *entryMeta) costLowerThan(other *entryMeta) bool {
-	if e.disabled != other.disabled {
-		return other.disabled
+	// Overloaded nodes are always higher-cost than not.
+	eOverload := e.load >= e.maxLoad
+	otherOverload := other.load >= other.maxLoad
+	if eOverload != otherOverload {
+		return otherOverload
 	}
+
+	// Prefer closer tiers.
 	if c := e.tier - other.tier; c != 0 {
 		return c < 0
 	}
+	// Prefer lower loads.
 	if c := e.load - other.load; c != 0 {
 		return c < 0
 	}
+	// Otherwise, round-robin.
 	return e.mark < other.mark
 }

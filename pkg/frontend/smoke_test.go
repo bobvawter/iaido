@@ -71,6 +71,9 @@ func TestSmoke(t *testing.T) {
 			},
 		},
 	}
+	if !a.NoError(cfg.Validate()) {
+		return
+	}
 
 	fe := frontend.Frontend{}
 	if !a.NoError(fe.Ensure(ctx, cfg)) {

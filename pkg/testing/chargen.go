@@ -35,7 +35,7 @@ func CharGen(ctx context.Context, bytesToSend int) (net.Addr, loop.Option, error
 		_ = l.Close()
 	}()
 	tcp := l.(*net.TCPListener)
-	opt := loop.WithTCPHandler(tcp, func(ctx context.Context, conn *net.TCPConn) error {
+	opt := loop.WithHandler(tcp, func(ctx context.Context, conn net.Conn) error {
 		for remaining := bytesToSend; remaining > 0; {
 			toSend := len(charBytes)
 			if remaining < toSend {
