@@ -17,7 +17,6 @@ package frontend
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log"
 	"net"
@@ -100,6 +99,7 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 			// disabled backends or prune overloaded nodes.)
 			go func(b *balancer.Balancer) {
 				ticker := time.NewTicker(time.Second)
+				defer ticker.Stop()
 				for {
 					select {
 					case <-loopCtx.Done():
@@ -122,14 +122,12 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 				log.Printf("listening on %s", listener.Addr())
 				bl.listener = listener
 
-				idleDuration, err := time.ParseDuration(fe.IdleDuration)
-				if err != nil {
-					return errors.Wrapf(err, "could not bind %q", tgt)
-				}
-
 				loop.New(
-					tcp.Proxy(listener, bl.balancer, idleDuration),
-					loop.WithMaxWorkers(fe.IncomingConnections),
+					tcp.Proxy(listener, bl.balancer, fe.IdleDuration),
+					loop.WithPreflight(func(ctx context.Context) error {
+						_, err := bl.balancer.Wait(ctx)
+						return err
+					}),
 					loop.WithLatch(f.mu.latch),
 				).Start(loopCtx)
 			default:
@@ -151,15 +149,15 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// MarshalJSON implements json.Marshaler and provides diagnostic information.
-func (f *Frontend) MarshalJSON() ([]byte, error) {
+// MarshalYAML implements yaml.Marshaler and provides diagnostic information.
+func (f *Frontend) MarshalYAML() (interface{}, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	payload := struct {
-		BuildID   string
-		BuildInfo *debug.BuildInfo
-		Listeners map[string]*balancer.Balancer
+		BuildID   string                        `yaml:"buildID"`
+		BuildInfo *debug.BuildInfo              `yaml:"buildInfo"`
+		Listeners map[string]*balancer.Balancer `yaml:"listeners"`
 	}{
 		BuildID:   buildID,
 		Listeners: make(map[string]*balancer.Balancer),
@@ -170,7 +168,7 @@ func (f *Frontend) MarshalJSON() ([]byte, error) {
 	for tgt, bl := range f.mu.loops {
 		payload.Listeners[tgt] = bl.balancer
 	}
-	return json.Marshal(payload)
+	return payload, nil
 }
 
 // Wait for all active connections to drain.

@@ -16,26 +16,38 @@ package copier
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"io"
-	"net"
 	"time"
 
+	"net"
+
 	"github.com/pkg/errors"
+	"gopkg.in/yaml.v3"
 )
 
 // Copier implements a simplex proxy connection.
 type Copier struct {
-	From net.Conn
-	To   net.Conn
-
 	// Activity will be called if it is non-nil whenever traffic
 	// has been copied.
 	Activity func(written int64)
-
+	From     DeadlineReader
+	To       DeadlineWriter
 	// The period of time to wait before interrupting a copy to check
-	// for Context cancellation.
+	// for Context cancellation or to report the number of bytes copied.
 	WakePeriod time.Duration
+}
+
+// DeadlineReader is under pressure to perform.
+type DeadlineReader interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
+
+// DeadlineWriter is under pressure to perform.
+type DeadlineWriter interface {
+	io.Writer
+	SetWriteDeadline(time.Time) error
 }
 
 // Copy executes the given copy operation, but adds an occasional check
@@ -64,25 +76,26 @@ func (c *Copier) Copy(ctx context.Context) error {
 				continue
 			}
 		}
+		// err will be nil here if the copy was successful.
 		return errors.Wrapf(err, "copy %s", c)
 	}
 }
 
-// MarshalJSON implements json.Marshaler and provides diagnostic information.
-func (c *Copier) MarshalJSON() ([]byte, error) {
+// MarshalYAML implements yaml.Marshaler and provides diagnostic information.
+func (c *Copier) MarshalYAML() (interface{}, error) {
 	payload := struct {
-		From   string
-		To     string
-		Linger time.Duration
+		From       string
+		To         string
+		WakePeriod time.Duration `yaml:"wakePeriod"`
 	}{
-		From:   c.From.RemoteAddr().String(),
-		To:     c.To.RemoteAddr().String(),
-		Linger: c.WakePeriod,
+		From:       fmt.Sprint(c.From),
+		To:         fmt.Sprint(c.To),
+		WakePeriod: c.WakePeriod,
 	}
-	return json.Marshal(payload)
+	return payload, nil
 }
 
 func (c *Copier) String() string {
-	data, _ := c.MarshalJSON()
+	data, _ := yaml.Marshal(c)
 	return string(data)
 }

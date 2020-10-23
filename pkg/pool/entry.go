@@ -13,10 +13,6 @@
 
 package pool
 
-import (
-	"encoding/json"
-)
-
 // An Entry represents something that can be picked out of a Pool.
 type Entry interface {
 	// Disabled should return true if the entry is currently ineligible
@@ -52,7 +48,7 @@ type entryMeta struct {
 	tier int
 }
 
-func (e *entryMeta) MarshalJSON() ([]byte, error) {
+func (e *entryMeta) MarshalYAML() (interface{}, error) {
 	payload := struct {
 		Disabled bool
 		Entry    interface{}
@@ -66,7 +62,7 @@ func (e *entryMeta) MarshalJSON() ([]byte, error) {
 		Mark:     e.mark,
 		Tier:     e.tier,
 	}
-	return json.Marshal(payload)
+	return payload, nil
 }
 
 func (e *entryMeta) costLowerThan(other *entryMeta) bool {

@@ -16,7 +16,7 @@
 package pool
 
 import (
-	"encoding/json"
+	"context"
 	"sort"
 	"sync"
 )
@@ -34,6 +34,8 @@ type Pool struct {
 		// round-robin effect.
 		mark uint64
 		q    entryPQueue
+		// Broadcasts calls to Add and Rebalance. Synchronized on mu.
+		pickMightSucceed *sync.Cond
 	}
 }
 
@@ -52,6 +54,10 @@ func (p *Pool) Add(e Entry) {
 	}
 
 	p.mu.canonical[e] = p.mu.q.add(e)
+
+	if p.mu.pickMightSucceed != nil {
+		p.mu.pickMightSucceed.Broadcast()
+	}
 }
 
 // All returns all entries currently in the Pool.
@@ -76,8 +82,8 @@ func (p *Pool) Len() int {
 	return ret
 }
 
-// MarshalJSON dumps the current status of the Pool into a JSON structure.
-func (p *Pool) MarshalJSON() ([]byte, error) {
+// MarshalYAML dumps the current status of the Pool into a YAML structure.
+func (p *Pool) MarshalYAML() (interface{}, error) {
 	p.mu.Lock()
 	snapshot := make([]*entryMeta, len(p.mu.q))
 	copy(snapshot, p.mu.q)
@@ -97,15 +103,18 @@ func (p *Pool) MarshalJSON() ([]byte, error) {
 			return tier[i].load > tier[j].load
 		})
 	}
-	return json.Marshal(payload)
+	return payload, nil
 }
 
 // Pick will return the next Entry to use.
 func (p *Pool) Pick() Entry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.pickLocked()
+}
 
-	// Choose the best enabled entry.
+// Choose the best enabled entry.
+func (p *Pool) pickLocked() Entry {
 	for range p.mu.q {
 		top := p.mu.q[0]
 		p.mu.mark++
@@ -125,6 +134,9 @@ func (p *Pool) Pick() Entry {
 func (p *Pool) Rebalance() {
 	p.mu.Lock()
 	p.mu.q.updateAll()
+	if p.mu.pickMightSucceed != nil {
+		p.mu.pickMightSucceed.Broadcast()
+	}
 	p.mu.Unlock()
 }
 
@@ -136,5 +148,31 @@ func (p *Pool) Remove(e Entry) {
 	if existing := p.mu.canonical[e]; existing != nil {
 		delete(p.mu.canonical, e)
 		p.mu.q.remove(existing)
+	}
+}
+
+// Wait is a blocking version of Pick().
+func (p *Pool) Wait(ctx context.Context) (Entry, error) {
+	ch := make(chan Entry, 1)
+
+	go func() {
+		p.mu.Lock()
+		if p.mu.pickMightSucceed == nil {
+			p.mu.pickMightSucceed = sync.NewCond(&p.mu)
+		}
+
+		var picked Entry
+		for picked = p.pickLocked(); picked == nil; picked = p.pickLocked() {
+			p.mu.pickMightSucceed.Wait()
+		}
+		p.mu.Unlock()
+		ch <- picked
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case picked := <-ch:
+		return picked, nil
 	}
 }

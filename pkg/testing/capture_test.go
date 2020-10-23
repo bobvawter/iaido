@@ -20,6 +20,8 @@ import (
 	"net"
 	"testing"
 
+	"sync/atomic"
+
 	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
 	"github.com/stretchr/testify/assert"
@@ -31,8 +33,8 @@ func TestCapture(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var buf bytes.Buffer
-	addr, opt, err := Capture(ctx, &buf)
+	var ctr byteCounter
+	addr, opt, err := Capture(ctx, &ctr)
 	if !a.NoError(err) {
 		return
 	}
@@ -50,5 +52,15 @@ func TestCapture(t *testing.T) {
 	a.NoError(err)
 	a.NoError(conn.Close())
 	l.Wait()
-	a.Equal(size, buf.Len())
+	a.Equal(uint64(size), atomic.LoadUint64(&ctr.count))
+}
+
+type byteCounter struct {
+	count uint64
+}
+
+func (c *byteCounter) Write(data []byte) (int, error) {
+	l := len(data)
+	atomic.AddUint64(&c.count, uint64(l))
+	return l, nil
 }

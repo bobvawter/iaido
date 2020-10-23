@@ -17,16 +17,15 @@ package balancer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/bobvawter/iaido/pkg/config"
 	"github.com/bobvawter/iaido/pkg/pool"
 	"github.com/pkg/errors"
+	"gopkg.in/yaml.v3"
 )
 
 // A Balancer implements pooling behavior across resolved backends.
@@ -52,14 +51,6 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.mu.cfg = &cfg
-
-	dialTimeout, err := time.ParseDuration(cfg.DialFailureTimeout)
-	if err != nil {
-		return errors.Wrapf(err, "could not parse DialFailureTimeout")
-	}
-	if dialTimeout == 0 {
-		dialTimeout = time.Minute
-	}
 
 	// Try to retain existing Backend objects across refreshes
 	// to retain metadata / metrics.
@@ -96,8 +87,9 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 				// (Re-)configure the backend.
 				backend.mu.Lock()
 				backend.mu.disabled = target.Disabled
-				backend.mu.dialTimeout = dialTimeout
-				backend.mu.maxConnections = cfg.MaxBackendConnections
+				backend.mu.dialTimeout = tier.DialFailureTimeout
+				backend.mu.forcePromotionAfter = tier.ForcePromotionAfter
+				backend.mu.maxConnections = tier.MaxBackendConnections
 				backend.mu.tier = tierIdx
 				backend.mu.Unlock()
 			}
@@ -125,9 +117,9 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 	return nil
 }
 
-// MarshalJSON implements json.Marshaler and provides a diagnostic
+// MarshalYAML implements yaml.Marshaler and provides a diagnostic
 // view of the Balancer.
-func (b *Balancer) MarshalJSON() ([]byte, error) {
+func (b *Balancer) MarshalYAML() (interface{}, error) {
 	payload := struct {
 		Pool   *pool.Pool
 		Config *config.BackendPool
@@ -135,7 +127,7 @@ func (b *Balancer) MarshalJSON() ([]byte, error) {
 		Pool:   &b.p,
 		Config: b.Config(),
 	}
-	return json.Marshal(payload)
+	return payload, nil
 }
 
 // Pick returns the next best choice from the pool or nil if one is not
@@ -151,6 +143,16 @@ func (b *Balancer) Rebalance(context.Context) {
 }
 
 func (b *Balancer) String() string {
-	bytes, _ := b.MarshalJSON()
+	bytes, _ := yaml.Marshal(b)
 	return string(bytes)
+}
+
+// Wait blocks until a Backend can be returned or the context is
+// canceled.
+func (b *Balancer) Wait(ctx context.Context) (*Backend, error) {
+	ret, err := b.p.Wait(ctx)
+	if ret != nil {
+		return ret.(*Backend), nil
+	}
+	return nil, err
 }

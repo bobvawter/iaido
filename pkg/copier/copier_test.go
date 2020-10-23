@@ -14,12 +14,13 @@
 package copier
 
 import (
-	"bytes"
 	"context"
 	"net"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"io/ioutil"
 
 	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
@@ -41,9 +42,8 @@ func TestCopier(t *testing.T) {
 	}
 	loop.New(cgOpt).Start(ctx)
 
-	var sink bytes.Buffer
 	l := latch.New()
-	sinkAddr, opt, err := it.Capture(ctx, &sink)
+	sinkAddr, opt, err := it.Capture(ctx, ioutil.Discard)
 	if !a.NoError(err) {
 		return
 	}
@@ -67,17 +67,15 @@ func TestCopier(t *testing.T) {
 		}
 
 		c := &Copier{
+			Activity: activity,
 			From:     cgConn,
 			To:       sinkConn,
-			Activity: activity,
 		}
 		a.NoError(c.Copy(ctx))
 		_ = cgConn.Close()
 		_ = sinkConn.Close()
 
-		l.Wait()
 		a.Equal(numChars, int(atomic.LoadInt64(&totalWrite)))
-		a.Equal(numChars, sink.Len())
 	})
 
 	// Ensure that the context-checking deadline fires.

@@ -17,13 +17,11 @@ package loop
 import (
 	"context"
 	"log"
-	"math"
 	"net"
 	"time"
 
 	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/pkg/errors"
-	"golang.org/x/sync/semaphore"
 )
 
 // A Loop is a generic server loop.
@@ -44,20 +42,20 @@ func New(options ...Option) *Loop {
 //
 // This method is non-blocking and will spawn additional goroutines.
 func (s *Loop) Start(ctx context.Context) {
-	maxConns := semaphore.NewWeighted(math.MaxInt64)
+	toLatch := latch.New()
 	var tcpLoops []*tcpHandler
-	var latch *latch.Latch
+	wait := func(ctx context.Context) error { return ctx.Err() }
 
 	// Filter out "static" options.
 	n := 0
 	for _, opt := range s.options {
 		switch t := opt.(type) {
-		case maxWorkers:
-			maxConns = semaphore.NewWeighted(int64(t))
+		case *preflight:
+			wait = t.fn
 		case *tcpHandler:
 			tcpLoops = append(tcpLoops, t)
 		case withLatch:
-			latch = t.latch
+			toLatch = t.latch
 		default:
 			s.options[n] = opt
 			n++
@@ -66,46 +64,40 @@ func (s *Loop) Start(ctx context.Context) {
 	s.options = s.options[:n]
 
 	for _, tcp := range tcpLoops {
-		// Capture.
-		tcp := tcp
-		go func() {
+		go func(tcp *tcpHandler) {
 			for {
-				_ = tcp.listener.SetDeadline(time.Now().Add(1 * time.Second))
-				select {
-				case <-ctx.Done():
+				if err := wait(ctx); err != nil {
+					log.Print(errors.Wrapf(err, "server loop exiting"))
 					return
-				default:
 				}
+				_ = tcp.listener.SetDeadline(time.Now().Add(1 * time.Second))
 				conn, err := tcp.listener.AcceptTCP()
 				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
 					continue
 				}
 				if err != nil {
-					if ctx.Done() == nil {
-						log.Print(errors.Wrap(err, "server loop exiting"))
-					}
+					log.Print(errors.Wrap(err, "server loop exiting"))
 					return
 				}
-				if latch != nil {
-					latch.Hold()
-				}
-				_ = maxConns.Acquire(ctx, 1)
-				go func() {
-					defer maxConns.Release(1)
-					if latch != nil {
-						defer latch.Release()
-					}
-					ctx, cancel := context.WithCancel(ctx)
-					defer cancel()
-					for i := range s.options {
-						s.options[i].onConnection(ctx)
-					}
-					if err := tcp.fn(ctx, conn); err != nil {
-						log.Printf("handler error %v", err)
-					}
-					_ = conn.Close()
-				}()
+				toLatch.Hold()
+				go processConnection(ctx, toLatch, tcp, conn, s.options)
 			}
-		}()
+		}(tcp)
 	}
+}
+
+func processConnection(
+	ctx context.Context, l *latch.Latch,
+	tcp *tcpHandler, conn *net.TCPConn, options []Option,
+) {
+	defer l.Release()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for i := range options {
+		options[i].onConnection(ctx)
+	}
+	if err := tcp.fn(ctx, conn); err != nil {
+		log.Printf("handler error %v", err)
+	}
+	_ = conn.Close()
 }

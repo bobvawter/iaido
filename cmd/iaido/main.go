@@ -26,14 +26,14 @@ import (
 	"github.com/bobvawter/iaido/pkg/frontend"
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
 	fs := pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
-	cfgPath := fs.StringP("config", "c", "iaido.json", "the configuration file to load")
-	cfgReloadPeriod := fs.Duration("reloadPeriod", 30*time.Second, "how often to check the configuration file for changes")
-	diagAddr := fs.String("diagAddr", "", "an IP:Port pair to bind a diagnostic HTTP server to (e.g. 127.0.0.1:6060)")
-	gracePeriod := fs.Duration("gracePeriod", 30*time.Second, "how long to wait before forcefully terminating")
+	cfgPath := fs.StringP("config", "c", "iaido.yaml", "the configuration file to load")
+	cfgReloadPeriod := fs.Duration("reloadPeriod", time.Second, "how often to check the configuration file for changes")
+	checkOnly := fs.Bool("check", false, "if true, check and print the configuration file and exit")
 	version := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		if err != pflag.ErrHelp {
@@ -49,21 +49,53 @@ func main() {
 		os.Exit(0)
 	}
 
+	cfg := &config.Config{}
+	var mTime time.Time
+	loadConfig := func() (bool, error) {
+		info, err := os.Stat(*cfgPath)
+		if err != nil {
+			return false, errors.Wrapf(err, "unable to stat config file: %s", *cfgPath)
+		}
+		if info.ModTime() == mTime {
+			return false, nil
+		}
+		mTime = info.ModTime()
+
+		err = loadConfig(*cfgPath, cfg)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	if _, err := loadConfig(); err != nil {
+		log.Fatal(err)
+	}
+
+	if *checkOnly {
+		bytes, err := yaml.Marshal(cfg)
+		if err != nil {
+			log.Fatal(err)
+		}
+		print(string(bytes))
+		os.Exit(0)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Set up a signal handler to gratefully, then forcefully terminate.
 	{
 		interrupted := make(chan os.Signal, 1)
-		signal.Notify(interrupted, os.Interrupt)
+		signal.Notify(interrupted, syscall.SIGTERM, syscall.SIGINT)
 		go func() {
 			<-interrupted
-			log.Printf("signal received, draining for %s", *gracePeriod)
+			log.Printf("signal received, draining for %s", cfg.GracePeriod)
 			cancel()
 			select {
 			case <-interrupted:
 				log.Print("second interrupt received")
-			case <-time.After(*gracePeriod):
+			case <-time.After(cfg.GracePeriod):
 				log.Print("grace period expired")
 			}
 			os.Exit(1)
@@ -71,17 +103,17 @@ func main() {
 	}
 
 	fe := &frontend.Frontend{}
-	if *diagAddr != "" {
+
+	if cfg.DiagAddr != "" {
 		go func() {
 			elts := map[string]interface{}{
+				"/configz": cfg,
 				"/statusz": fe,
 				"/healthz": "OK",
 			}
-			log.Print(diagnostics.ListenAndServe(*diagAddr, elts))
+			log.Print(diagnostics.ListenAndServe(cfg.DiagAddr, elts))
 		}()
 	}
-
-	var mTime time.Time
 
 	hupped := make(chan os.Signal, 1)
 	signal.Notify(hupped, syscall.SIGHUP)
@@ -91,31 +123,17 @@ func main() {
 
 refreshLoop:
 	for {
-		if info, err := os.Stat(*cfgPath); err == nil {
-			if info.ModTime().After(mTime) {
-				mTime = info.ModTime()
-
-				cfg, err := loadConfig(*cfgPath)
-				if err != nil {
-					log.Print(errors.Wrap(err, "configuration load failed"))
-					continue
-				}
-
-				if err := fe.Ensure(ctx, cfg); err != nil {
-					log.Print(errors.Wrapf(err, "unable to refresh backends"))
-					continue
-				}
-				log.Print("configuration updated")
-			}
-		} else {
-			log.Printf("unable to stat config file: %v", err)
+		if err := fe.Ensure(ctx, cfg); err != nil {
+			log.Printf("unable to refresh frontend: %v", err)
 		}
-
 		select {
 		case <-ctx.Done():
 			break refreshLoop
 		case <-ticker.C:
 		case <-hupped:
+		}
+		if _, err := loadConfig(); err != nil {
+			log.Printf("unable to reload configuration: %v", err)
 		}
 	}
 
@@ -124,12 +142,12 @@ refreshLoop:
 	os.Exit(0)
 }
 
-func loadConfig(path string) (*config.Config, error) {
+func loadConfig(path string, cfg *config.Config) error {
 	cfgFile, err := os.Open(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not open configuration file %s", path)
+		return errors.Wrapf(err, "could not open configuration file %s", path)
 	}
 	defer cfgFile.Close()
 
-	return config.ParseConfig(cfgFile)
+	return config.DecodeConfig(cfgFile, cfg)
 }

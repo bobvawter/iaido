@@ -15,10 +15,10 @@ package config
 
 import (
 	"bytes"
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 // This test creates a minimal configuration that can be re-parsed.
@@ -44,14 +44,14 @@ func TestMinimalConfig(t *testing.T) {
 		},
 	}
 
-	data, err := json.Marshal(cfg)
+	data, err := yaml.Marshal(cfg)
 	if !a.NoError(err) {
 		return
 	}
 
-	cfg2, err := ParseConfig(bytes.NewReader(data))
-	a.NoError(err)
-	data2, err := json.Marshal(cfg2)
+	cfg2 := &Config{}
+	a.NoError(DecodeConfig(bytes.NewReader(data), cfg2))
+	data2, err := yaml.Marshal(cfg2)
 	a.NoError(err)
 	t.Log(string(data2))
 }
