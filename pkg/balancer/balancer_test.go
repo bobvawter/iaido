@@ -64,7 +64,9 @@ func TestBalancerEndToEnd(t *testing.T) {
 	a.NoError(b.Configure(ctx, cfg, false))
 
 	for i := 0; i < requestCount; i++ {
-		checkBackend(ctx, a, b.Pick())
+		token := b.Pick()
+		checkBackend(a, token.Entry())
+		token.Release()
 	}
 
 	// Ensure that all backends have received traffic
@@ -112,14 +114,13 @@ func TestBalancerReconfigure(t *testing.T) {
 	}
 }
 
-func checkBackend(ctx context.Context, a *assert.Assertions, b *Backend) {
-	_, err := b.Dial(ctx, func(ctx context.Context, conn net.Conn) error {
-		a.Same(b, ctx.Value(KeyBackend))
+func checkBackend(a *assert.Assertions, b *Backend) {
+	conn, err := net.Dial(b.Addr().Network(), b.Addr().String())
+	if !a.NoError(err) {
+		return
+	}
 
-		buf, err := ioutil.ReadAll(conn)
-		a.NoError(err, b)
-		a.Len(buf, 4096, b)
-		return nil
-	})
-	a.NoError(err)
+	buf, err := ioutil.ReadAll(conn)
+	a.NoError(err, b)
+	a.Len(buf, 4096, b)
 }

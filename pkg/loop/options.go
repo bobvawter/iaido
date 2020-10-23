@@ -24,8 +24,10 @@ import (
 // An Option is used to provide additional configuration to a server or
 // to request additional information from the server internals.
 type Option interface {
-	onConnection(ctx context.Context)
+	is(option)
 }
+
+type option struct{}
 
 // WithConnectionCounter returns a metric function that indicates how
 // many network connections have been received.
@@ -40,21 +42,24 @@ type connectionCounter struct {
 	ctr uint64
 }
 
-func (c *connectionCounter) onConnection(context.Context) {
+func (c *connectionCounter) onConnection(_ context.Context) {
 	atomic.AddUint64(&c.ctr, 1)
 }
 
-// WithPreflight registers a function that may block acceptance of
-// incoming connections.
-func WithPreflight(fn func(context.Context) error) Option {
+func (c *connectionCounter) is(option) {}
+
+// WithPreflight registers a function that can block connection
+// acceptance and well as replace or update the Context to be used later
+// in the request.
+func WithPreflight(fn func(context.Context) (context.Context, error)) Option {
 	return &preflight{fn}
 }
 
 type preflight struct {
-	fn func(context.Context) error
+	fn func(context.Context) (context.Context, error)
 }
 
-func (*preflight) onConnection(context.Context) {}
+func (*preflight) is(option) {}
 
 // WithLatch will inject a Latch that is held whenever a
 // connection is active.  This allows callers to implement a graceful
@@ -67,16 +72,16 @@ type withLatch struct {
 	latch *latch.Latch
 }
 
-func (withLatch) onConnection(context.Context) {}
+func (withLatch) is(option) {}
 
-// WithTCPHandler defines a callback for TCP connections.
-func WithTCPHandler(listener *net.TCPListener, fn func(context.Context, *net.TCPConn) error) Option {
-	return &tcpHandler{listener, fn}
+// WithHandler provides a listeners
+func WithHandler(listener net.Listener, fn func(context.Context, net.Conn) error) Option {
+	return &handler{listener, fn}
 }
 
-type tcpHandler struct {
-	listener *net.TCPListener
-	fn       func(context.Context, *net.TCPConn) error
+type handler struct {
+	listener net.Listener
+	fn       func(context.Context, net.Conn) error
 }
 
-func (h *tcpHandler) onConnection(context.Context) {}
+func (*handler) is(option) {}

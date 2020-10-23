@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"sync"
 
@@ -28,6 +29,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// BackendToken is a typesafe wrapper around pool.Token.
+type BackendToken struct {
+	*pool.Token
+	balancer *Balancer
+}
+
+// Balancer returns the owner.
+func (t *BackendToken) Balancer() *Balancer {
+	return t.balancer
+}
+
+// Entry provides type safety around Token.Entry.
+func (t *BackendToken) Entry() *Backend {
+	ret, _ := t.Token.Entry().(*Backend)
+	return ret
+}
+
 // A Balancer implements pooling behavior across resolved backends.
 type Balancer struct {
 	p  pool.Pool
@@ -35,6 +53,16 @@ type Balancer struct {
 		sync.Mutex
 		cfg *config.BackendPool
 	}
+}
+
+// BestAvailableTier returns the tier of the backend that will likely
+// be returned to service the next incoming connection.
+func (b *Balancer) BestAvailableTier() int {
+	t := b.p.Peek()
+	if t == nil {
+		return math.MaxInt64
+	}
+	return t.Entry().Tier()
 }
 
 // Config returns the currently-active configuration.
@@ -86,10 +114,16 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 
 				// (Re-)configure the backend.
 				backend.mu.Lock()
-				backend.mu.disabled = target.Disabled
 				backend.mu.dialTimeout = tier.DialFailureTimeout
 				backend.mu.forcePromotionAfter = tier.ForcePromotionAfter
-				backend.mu.maxConnections = tier.MaxBackendConnections
+				if target.Disabled {
+					backend.mu.maxConnections = 0
+				} else if tier.MaxBackendConnections == 0 {
+					// Unconfigured means no limit.
+					backend.mu.maxConnections = math.MaxInt64
+				} else {
+					backend.mu.maxConnections = tier.MaxBackendConnections
+				}
 				backend.mu.tier = tierIdx
 				backend.mu.Unlock()
 			}
@@ -107,7 +141,7 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 
 			// Force existing connections to go into drain mode.
 			backend.mu.Lock()
-			backend.mu.disabled = true
+			backend.mu.maxConnections = 0
 			backend.mu.Unlock()
 		}
 	}
@@ -115,6 +149,12 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 	b.Rebalance(ctx)
 
 	return nil
+}
+
+// IsOverloaded returns true if the given backend should be considered
+// to be in an overload situation.
+func (b *Balancer) IsOverloaded(backend *Backend) bool {
+	return b.p.Load(backend) >= backend.MaxLoad()
 }
 
 // MarshalYAML implements yaml.Marshaler and provides a diagnostic
@@ -132,9 +172,12 @@ func (b *Balancer) MarshalYAML() (interface{}, error) {
 
 // Pick returns the next best choice from the pool or nil if one is not
 // available.
-func (b *Balancer) Pick() *Backend {
-	ret, _ := b.p.Pick().(*Backend)
-	return ret
+func (b *Balancer) Pick() *BackendToken {
+	t := b.p.Pick()
+	if t == nil {
+		return nil
+	}
+	return &BackendToken{t, b}
 }
 
 // Rebalance will rebalance the underlying pool.
@@ -149,10 +192,10 @@ func (b *Balancer) String() string {
 
 // Wait blocks until a Backend can be returned or the context is
 // canceled.
-func (b *Balancer) Wait(ctx context.Context) (*Backend, error) {
-	ret, err := b.p.Wait(ctx)
+func (b *Balancer) Wait(ctx context.Context) (*BackendToken, error) {
+	ret, err := b.p.Wait(ctx, 1)
 	if ret != nil {
-		return ret.(*Backend), nil
+		return &BackendToken{ret, b}, nil
 	}
 	return nil, err
 }

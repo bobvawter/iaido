@@ -15,12 +15,17 @@ package pool
 
 import (
 	"container/heap"
+	"math"
 )
+
+const notInPQueue = math.MaxInt64
 
 // This is based on the reference code from the heap package.
 //
 // Callers must not modify the slice directly, all updates should
 // be done through the mutation methods.
+//
+// This type is not internally synchronized.
 type entryPQueue []*entryMeta
 
 // Len implements heap.Interface.
@@ -54,7 +59,7 @@ func (q *entryPQueue) Pop() interface{} {
 	old := *q
 	n := len(old)
 	item := old[n-1]
-	item.index = -1
+	item.index = notInPQueue
 	old[n-1] = nil
 	*q = old[0 : n-1]
 	return item
@@ -62,12 +67,12 @@ func (q *entryPQueue) Pop() interface{} {
 
 func (q *entryPQueue) add(entry Entry) *entryMeta {
 	ret := &entryMeta{
-		Entry:    entry,
-		disabled: entry.Disabled(),
-		index:    -1,
-		load:     entry.Load(),
-		mark:     0,
-		tier:     entry.Tier(),
+		Entry:   entry,
+		index:   notInPQueue,
+		load:    0,
+		mark:    0,
+		maxLoad: entry.MaxLoad(),
+		tier:    entry.Tier(),
 	}
 	heap.Push(q, ret)
 	return ret
@@ -77,18 +82,23 @@ func (q *entryPQueue) remove(meta *entryMeta) {
 	heap.Remove(q, meta.index)
 }
 
-func (q *entryPQueue) update(meta *entryMeta, mark uint64) {
-	meta.disabled = meta.Disabled()
-	meta.load = meta.Load()
+func (q *entryPQueue) update(meta *entryMeta, loadDelta int, mark mark) bool {
+	ret := false
+
 	meta.mark = mark
+	meta.maxLoad = meta.MaxLoad()
 	meta.tier = meta.Tier()
+	if meta.load+loadDelta <= meta.maxLoad {
+		meta.load += loadDelta
+		ret = true
+	}
 	heap.Fix(q, meta.index)
+	return ret
 }
 
 func (q *entryPQueue) updateAll() {
 	for _, meta := range *q {
-		meta.disabled = meta.Disabled()
-		meta.load = meta.Load()
+		meta.maxLoad = meta.MaxLoad()
 		meta.tier = meta.Tier()
 	}
 	heap.Init(q)

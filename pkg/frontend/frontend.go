@@ -123,11 +123,12 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 				bl.listener = listener
 
 				loop.New(
-					tcp.Proxy(listener, bl.balancer, fe.IdleDuration),
-					loop.WithPreflight(func(ctx context.Context) error {
-						_, err := bl.balancer.Wait(ctx)
-						return err
+					// Don't Accept() a connection until a backend can be chosen.
+					loop.WithPreflight(func(ctx context.Context) (context.Context, error) {
+						token, err := bl.balancer.Wait(ctx)
+						return context.WithValue(ctx, balancer.KeyBackendToken, token), err
 					}),
+					tcp.Proxy(listener, fe.IdleDuration),
 					loop.WithLatch(f.mu.latch),
 				).Start(loopCtx)
 			default:

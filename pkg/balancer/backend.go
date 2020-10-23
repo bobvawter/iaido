@@ -14,15 +14,11 @@
 package balancer
 
 import (
-	"context"
 	"log"
-	"math/rand"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,8 +26,8 @@ import (
 type Key int
 
 const (
-	// KeyBackend is a context key that can retrieve a *Backend.
-	KeyBackend Key = iota + 1
+	// KeyBackendToken retrieves a *BackendToken from a Context.
+	KeyBackendToken Key = iota + 1
 )
 
 // A Backend creates connections to one specific backend (e.g. a TCP
@@ -40,46 +36,18 @@ type Backend struct {
 	addr net.Addr
 	mu   struct {
 		sync.RWMutex
-		dialTimeout time.Duration
-		// This field can be set via configuration to pull a backend from
-		// service.
-		disabled            bool
+		dialTimeout         time.Duration
 		disableDuration     time.Duration
 		disabledUntil       time.Time
 		forcePromotionAfter time.Duration
 		maxConnections      int
 		tier                int
 	}
-	atomic struct {
-		openConns int32
-	}
 }
 
-// Dial opens a connection to the backend and invokes the given callback.
-// The number of concurrently-active session is available from Load().
-func (b *Backend) Dial(ctx context.Context, fn func(context.Context, net.Conn) error) (shouldRetry bool, err error) {
-	numConns := int(atomic.AddInt32(&b.atomic.openConns, 1))
-	defer atomic.AddInt32(&b.atomic.openConns, -1)
-
-	// Only hold the lock long enough to get the information needed
-	// to set up the connection (or not).
-	b.mu.RLock()
-	dialTimeout := b.mu.dialTimeout
-	maxConns := b.mu.maxConnections
-	b.mu.RUnlock()
-
-	if maxConns != 0 && numConns > maxConns {
-		return true, errors.Errorf("reached maximum connection count of %d", maxConns)
-	}
-
-	conn, err := net.DialTimeout(b.addr.Network(), b.addr.String(), dialTimeout)
-	if err != nil {
-		b.DisableFor(dialTimeout)
-		return true, err
-	}
-	defer conn.Close()
-
-	return false, fn(context.WithValue(ctx, KeyBackend, b), conn)
+// Addr returns the Backend address.
+func (b *Backend) Addr() net.Addr {
+	return b.addr
 }
 
 // DisableFor takes the Backend out of rotation for the given duration.
@@ -91,23 +59,6 @@ func (b *Backend) DisableFor(d time.Duration) {
 	b.mu.Unlock()
 }
 
-// Disabled implements pool.Entry and will take the backend ouf of
-// rotation due to calls to DisableFor or if ShedLoad is true.
-func (b *Backend) Disabled() bool {
-	if b.ShedLoad() {
-		return true
-	}
-
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	when := b.mu.disabledUntil
-	if when.IsZero() {
-		return false
-	}
-	return time.Now().Before(when)
-}
-
 // ForcePromotionAfter indicates that clients should be forcefully
 // disconnected from this backend if a better choice is available.
 func (b *Backend) ForcePromotionAfter() time.Duration {
@@ -117,67 +68,39 @@ func (b *Backend) ForcePromotionAfter() time.Duration {
 	return ret
 }
 
-// Load implements pool.Entry and reflects the number of concurrent
+// MaxLoad implements pool.Entry and reflects the number of concurrent
 // calls to Dial().
-func (b *Backend) Load() int {
-	return int(atomic.LoadInt32(&b.atomic.openConns))
+func (b *Backend) MaxLoad() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if time.Now().Before(b.mu.disabledUntil) {
+		return 0
+	}
+
+	return b.mu.maxConnections
 }
 
 // MarshalYAML implements yaml.Marshaler interfare and provides a
 // diagnostic view of the Backend.
 func (b *Backend) MarshalYAML() (interface{}, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	payload := struct {
 		Address              string
-		Disabled             bool
-		DisabledUntil        *time.Time    `yaml:"disabledUntil"`
+		DisabledUntil        time.Time     `yaml:"disabledUntil"`
 		ForcePromotionsAfter time.Duration `yaml:"forcePromotionsAfter"`
-		OpenConnections      int           `yaml:"openConnections"`
+		MaxConnections       int           `yaml:"maxConnections"`
 		Tier                 int
 	}{
 		Address:              b.addr.String(),
-		Disabled:             b.Disabled(),
-		ForcePromotionsAfter: b.ForcePromotionAfter(),
-		OpenConnections:      b.Load(),
-		Tier:                 b.Tier(),
-	}
-	if b.Disabled() {
-		b.mu.RLock()
-		when := b.mu.disabledUntil
-		b.mu.RUnlock()
-		payload.DisabledUntil = &when
+		DisabledUntil:        b.mu.disabledUntil,
+		ForcePromotionsAfter: b.mu.forcePromotionAfter,
+		MaxConnections:       b.mu.maxConnections,
+		Tier:                 b.mu.tier,
 	}
 	return payload, nil
-}
-
-// ShedLoad provides advice to flows through the Backend as to whether
-// or not they should attempt to aggressively remove load. The value
-// returned is probabilistic, reflecting the amount of overload,
-// relative to the desired number of concurrent users of the Backend.
-func (b *Backend) ShedLoad() bool {
-	b.mu.RLock()
-	disabled := b.mu.disabled
-	max := int32(b.mu.maxConnections)
-	b.mu.RUnlock()
-
-	if disabled {
-		return true
-	}
-
-	if max == 0 {
-		return false
-	}
-
-	open := atomic.LoadInt32(&b.atomic.openConns)
-	if open <= max {
-		return false
-	}
-
-	if open >= 2*max {
-		return true
-	}
-
-	prob := float32(open-max) / float32(max)
-	return rand.Float32() <= prob
 }
 
 func (b *Backend) String() string {

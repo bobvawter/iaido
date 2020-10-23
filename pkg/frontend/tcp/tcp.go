@@ -16,11 +16,11 @@ package tcp
 
 import (
 	"context"
+	"math/rand"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
-
-	"sync"
 
 	"github.com/bobvawter/iaido/pkg/balancer"
 	"github.com/bobvawter/iaido/pkg/copier"
@@ -32,26 +32,27 @@ import (
 // Proxy constructs a TCP proxy frontend around a balancer service.
 //
 // A non-zero idleDuration will disconnect lingering connections.
-func Proxy(listener *net.TCPListener, balancer *balancer.Balancer, idleDuration time.Duration) loop.Option {
-	return loop.WithTCPHandler(listener, func(_ context.Context, incoming *net.TCPConn) error {
-		// CONTEXT BREAK: We want to isolate the copy operation from
-		// any external context cancellation to allow for graceful
-		// drain operations.
-		ctx := context.Background()
+func Proxy(listener *net.TCPListener, idleDuration time.Duration) loop.Option {
+	return loop.WithHandler(listener, func(ctx context.Context, incoming net.Conn) error {
+		// An initial, happy-path backend will already be reserved
+		// for us by the loop preflight.
+		token := ctx.Value(balancer.KeyBackendToken).(*balancer.BackendToken)
 
 		for {
-			backend := balancer.Pick()
-			if backend == nil {
-				return errors.Errorf("no backend available")
-			}
-
-			retry, err := backend.Dial(ctx, func(ctx context.Context, outgoing net.Conn) error {
-				return proxy(ctx, balancer, backend, incoming, outgoing.(*net.TCPConn), idleDuration)
-			})
-			if retry {
+			addr := token.Entry().Addr()
+			conn, err := net.Dial(addr.Network(), addr.String())
+			if err != nil {
+				token.Release()
+				token, err = token.Balancer().Wait(ctx)
+				if err != nil {
+					return err
+				}
 				continue
 			}
-			return err
+			// CONTEXT BREAK: We want to isolate the copy operation from
+			// any external context cancellation to allow for graceful
+			// drain operations.
+			return proxy(context.Background(), token, incoming.(*net.TCPConn), conn.(*net.TCPConn), idleDuration)
 		}
 	})
 }
@@ -59,12 +60,13 @@ func Proxy(listener *net.TCPListener, balancer *balancer.Balancer, idleDuration 
 // proxy implements the main data-copying behavior for a TCP frontend.
 func proxy(
 	ctx context.Context,
-	balancer *balancer.Balancer,
-	backend *balancer.Backend,
+	token *balancer.BackendToken,
 	incoming, outgoing *net.TCPConn,
 	idleDuration time.Duration,
 ) error {
-	const connectionSampleTime = time.Second
+	defer token.Release()
+	backend := token.Entry()
+	maintenanceTime := token.Balancer().Config().MaintenanceTime
 
 	ctx, cancel := context.WithCancel(ctx)
 	errGroup, ctx := errgroup.WithContext(ctx)
@@ -82,38 +84,49 @@ func proxy(
 
 	// Maintenance tasks:
 	// * Shed load on overloaded backends
-	// * Shed load if a better backend has been avilable for some time
+	// * Shed load if a better backend has been available for some time.
 	// * Enforce idleness timeout
 	errGroup.Go(func() error {
-		// Capture
-		idleDuration := idleDuration
-		ticker := time.NewTicker(connectionSampleTime)
-		var promotionAvailableSince time.Time
+		// We're likely to have a large number of connections arrive at
+		// more or less the same time.  Smear the intervals over which
+		// we're performing any kind of maintenance to ensure that we
+		// don't drop all connections at exactly the same moment.
+		smear := time.Duration(rand.Int63n(maintenanceTime.Nanoseconds()))
+		ticker := time.NewTicker(maintenanceTime/2 + smear)
 		defer ticker.Stop()
+
+		var forceDisconnectReason error
+		var promotableSince time.Time
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-ticker.C:
-				if backend.ShedLoad() {
-					return errors.Errorf("shedding load %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
-				}
-
-				if backend.Tier() > 0 && backend.ForcePromotionAfter() != 0 {
-					if better := balancer.Pick(); better != nil && better.Tier() < backend.Tier() {
-						if promotionAvailableSince.IsZero() {
-							promotionAvailableSince = time.Now()
-						} else if time.Now().After(promotionAvailableSince.Add(backend.ForcePromotionAfter())) {
-							return errors.Errorf("forcing promotion of %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
-						}
+			case now := <-ticker.C:
+				// See if there's room to promote the connection.
+				if backend.Tier() > 0 && backend.ForcePromotionAfter() != 0 && promotableSince.IsZero() {
+					if better := token.Balancer().BestAvailableTier(); better < backend.Tier() {
+						promotableSince = now
 					} else {
-						promotionAvailableSince = time.Time{}
+						promotableSince = time.Time{}
 					}
 				}
 
-				when := idleSince.Load().(time.Time)
-				if !when.IsZero() && time.Now().After(when.Add(idleDuration)) {
-					return errors.Errorf("closing idle connection %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
+				var shouldDisconnect error
+
+				if token.Balancer().IsOverloaded(backend) {
+					shouldDisconnect = errors.Errorf("backend overloaded %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
+				} else if !promotableSince.IsZero() && now.After(promotableSince.Add(backend.ForcePromotionAfter())) {
+					shouldDisconnect = errors.Errorf("forcing promotion of %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
+				} else if idle := idleSince.Load().(time.Time); !idle.IsZero() && now.After(idle.Add(idleDuration)) {
+					shouldDisconnect = errors.Errorf("closing idle connection %s -> %s", incoming.RemoteAddr(), outgoing.RemoteAddr())
+				}
+
+				if shouldDisconnect == nil {
+					forceDisconnectReason = nil
+				} else if forceDisconnectReason == nil {
+					forceDisconnectReason = shouldDisconnect
+				} else {
+					return forceDisconnectReason
 				}
 			}
 		}
@@ -127,7 +140,7 @@ func proxy(
 			Activity:   activity,
 			From:       incoming,
 			To:         outgoing,
-			WakePeriod: connectionSampleTime,
+			WakePeriod: time.Second,
 		}).Copy(ctx)
 		_ = incoming.CloseRead()
 		_ = outgoing.CloseWrite()
@@ -141,7 +154,7 @@ func proxy(
 			Activity:   activity,
 			From:       outgoing,
 			To:         incoming,
-			WakePeriod: connectionSampleTime,
+			WakePeriod: time.Second,
 		}).Copy(ctx)
 		_ = outgoing.CloseRead()
 		_ = incoming.CloseWrite()
