@@ -1,8 +1,8 @@
-.PHONY: build clean generate fmt install lint test
+.PHONY: build clean generate install lint test
 
-all: release
+all: build
 
-build:
+build: generate
 	go build -ldflags "-s -w -X github.com/bobvawter/iaido/pkg/frontend.buildID=`git describe --tags --always --dirty`" -o bin/iaido ./cmd/iaido
 	tar cfz bin/iaido$(BUILD_SUFFIX).tar.gz -C bin iaido
 
@@ -12,20 +12,21 @@ clean:
 generate: 
 	go generate ./... 
 
-fmt:
-	go fmt ./... 
-
 install:
-	go install 
+	go install
 
 lint: generate
+	go fmt ./...
+	go vet ./...
 	go run golang.org/x/lint/golint -set_exit_status ./...
 	go run honnef.co/go/tools/cmd/staticcheck -checks all ./...
-
-test: generate
-	go vet ./...
-	go test -v -race -coverpkg=./... -coverprofile=coverage.txt -covermode=atomic ./...
 	find configs -name *.yaml -print0 | xargs -0 -L1 -t go run github.com/bobvawter/iaido/cmd/iaido --check -c
 
-release: fmt lint test build
+test: generate
+	go test -coverpkg=./pkg/... -coverprofile=coverage.txt -covermode=atomic ./pkg/...
+
+testrace: generate
+	go test -race -coverpkg=./pkg/... -coverprofile=coverage.txt -covermode=atomic ./pkg/...
+
+release: lint test build
 

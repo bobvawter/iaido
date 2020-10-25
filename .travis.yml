@@ -1,7 +1,7 @@
 branches:
   only:
-  - main
-  - /^v\d+\.\d+(\.\d+)?(-\S*)?$/
+    - main
+    - /^v\d+\.\d+(\.\d+)?(-\S*)?$/
 
 env:
   global:
@@ -9,20 +9,36 @@ env:
 
 language: go
 
-os:
-  - linux
-  - osx
-
-arch:
-  - amd64
-  - arm64
-
 go:
   - 1.x
 
+matrix:
+  include:
+    - arch: amd64
+      os: linux
+      script: make testrace build
+    - arch: amd64
+      os: osx
+      script: make testrace build
+    - arch: amd64
+      os: windows
+      script: go test -race ./... && go build -o bin/iaido.exe ./cmd/iaido
+    - arch: arm64
+      os: linux
+      script: make testrace build
+    - arch: ppc64le
+      os: linux
+      script: make testrace build
+    - arch: s390x
+      os: linux
+      script: make test build
+
+
 deploy:
   provider: releases
-  file: bin/*.tar.gz
+  file:
+    - bin/*.tar.gz
+    - bin/*.exe
   edge: true # opt in to dpl v2
   on:
     tags: true
