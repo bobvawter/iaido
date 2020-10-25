@@ -72,15 +72,11 @@ func (s *Loop) Start(ctx context.Context) {
 					return
 				}
 
-				if x, ok := h.listener.(interface{ SetDeadline(time.Time) error }); ok {
-					_ = x.SetDeadline(time.Now().Add(1 * time.Second))
-				}
-				conn, err := h.listener.Accept()
-				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-					continue
-				}
+				conn, err := listen(reqContext, h.listener)
 				if err != nil {
-					log.Print(errors.Wrap(err, "server loop exiting"))
+					if err != context.Canceled {
+						log.Print(errors.Wrap(err, "server loop exiting"))
+					}
 					return
 				}
 
@@ -102,5 +98,27 @@ func (s *Loop) Start(ctx context.Context) {
 				}()
 			}
 		}(h)
+	}
+}
+
+// listen is a cancellable loop to accept an incoming network connection.
+func listen(ctx context.Context, listener net.Listener) (net.Conn, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		if x, ok := listener.(interface{ SetDeadline(time.Time) error }); ok {
+			_ = x.SetDeadline(time.Now().Add(1 * time.Second))
+		}
+		conn, err := listener.Accept()
+		if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
 	}
 }
