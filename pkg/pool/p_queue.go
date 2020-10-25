@@ -88,7 +88,12 @@ func (q *entryPQueue) update(meta *entryMeta, loadDelta int, mark mark) bool {
 	meta.mark = mark
 	meta.maxLoad = meta.MaxLoad()
 	meta.tier = meta.Tier()
-	if meta.load+loadDelta <= meta.maxLoad {
+	// Only allow the load to increase by the delta, up to the max.
+	if loadDelta > 0 && meta.load+loadDelta <= meta.maxLoad {
+		meta.load += loadDelta
+		ret = true
+	} else if loadDelta <= 0 {
+		// But always allow load to be shed (e.g. drain a 0-cap backend)
 		meta.load += loadDelta
 		ret = true
 	}

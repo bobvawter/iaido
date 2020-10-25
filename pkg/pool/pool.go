@@ -77,6 +77,19 @@ func (p *Pool) All() []Entry {
 	return ret
 }
 
+// IsOverloaded returns true if the Entry is known to have a higher
+// load than its configured maximum (e.g. when draining).
+func (p *Pool) IsOverloaded(e Entry) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	meta := p.mu.canonical[e]
+	if meta == nil {
+		return true
+	}
+	return meta.load > meta.maxLoad
+}
+
 // Len returns the total size of the pool.
 func (p *Pool) Len() int {
 	p.mu.Lock()

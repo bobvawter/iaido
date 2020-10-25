@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -85,6 +84,10 @@ func TestRefCount(t *testing.T) {
 	p.Add(e)
 	a.Equal(0, p.Load(e))
 
+	// Verify that Peek doesn't alter the refcount
+	a.Same(e, p.Peek().Entry())
+	a.Equal(0, p.Load(e))
+
 	// It should be possible to Pick the entry out.
 	t0 := p.Pick()
 	a.NotNil(t0)
@@ -144,7 +147,6 @@ func TestEmptyPoolWait(t *testing.T) {
 
 	e := &trivial{}
 	p.Add(e)
-	log.Print("ADDED")
 
 	select {
 	case picked := <-ch:
@@ -152,6 +154,40 @@ func TestEmptyPoolWait(t *testing.T) {
 	case <-time.NewTimer(10 * time.Minute).C:
 		a.Fail("timeout")
 	}
+}
+
+// Ensure that tokens can always be released, even if the entry is
+// overloaded.
+func TestDraining(t *testing.T) {
+	a := assert.New(t)
+
+	var p pool.Pool
+	e := &trivial{max: 100}
+	p.Add(e)
+
+	t0 := p.Pick()
+	a.NotNil(t0)
+	t1 := p.Pick()
+	a.NotNil(t1)
+
+	a.Equal(2, p.Load(e))
+
+	e.disabled = true
+	a.Nil(p.Pick())
+	a.Equal(2, p.Load(e))
+	a.True(p.IsOverloaded(e))
+
+	t0.Release()
+	a.Equal(1, p.Load(e))
+
+	t1.Release()
+	a.Equal(0, p.Load(e))
+
+	a.Nil(p.Pick())
+
+	e.disabled = false
+	a.NotNil(p.Pick())
+	a.False(p.IsOverloaded(e))
 }
 
 func TestLoadDistribution(t *testing.T) {
@@ -261,6 +297,12 @@ func TestOneTier(t *testing.T) {
 	checkRoundRobin(a, &p, tier0)
 }
 
+func TestOverloadedWithUnknown(t *testing.T) {
+	a := assert.New(t)
+	var p pool.Pool
+	a.True(p.IsOverloaded(&trivial{}))
+}
+
 func TestTwoTier(t *testing.T) {
 	const entryCount = 128
 	a := assert.New(t)
@@ -353,6 +395,21 @@ func TestThreeTier(t *testing.T) {
 	checkRoundRobin(a, &p, tier0)
 	checkRoundRobin(a, &p, tier0)
 	checkRoundRobin(a, &p, tier0)
+}
+
+func TestWaitToBeAdded(t *testing.T) {
+	a := assert.New(t)
+	var p pool.Pool
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	go func() {
+		p.Add(&trivial{})
+	}()
+
+	token, err := p.Wait(ctx, 1)
+	a.NoError(err)
+	a.NotNil(token)
 }
 
 func checkRoundRobin(a *assert.Assertions, p *pool.Pool, expected []*trivial) {

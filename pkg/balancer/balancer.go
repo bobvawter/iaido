@@ -152,9 +152,9 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 }
 
 // IsOverloaded returns true if the given backend should be considered
-// to be in an overload situation.
+// to be in an overload situation (e.g. when draining).
 func (b *Balancer) IsOverloaded(backend *Backend) bool {
-	return b.p.Load(backend) >= backend.MaxLoad()
+	return b.p.IsOverloaded(backend)
 }
 
 // MarshalYAML implements yaml.Marshaler and provides a diagnostic
