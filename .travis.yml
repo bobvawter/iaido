@@ -12,33 +12,30 @@ language: go
 go:
   - 1.x
 
-matrix:
+script: make lint testrace build
+
+jobs:
   include:
-    - arch: amd64
-      os: linux
-      script: make testrace build
-    - arch: amd64
-      os: osx
-      script: make testrace build
-    - arch: amd64
-      os: windows
-      script: go test -race ./... && go build -o bin/iaido.exe ./cmd/iaido
-    - arch: arm64
-      os: linux
-      script: make testrace build
-    - arch: ppc64le
-      os: linux
-      script: make testrace build
-    - arch: s390x
-      os: linux
-      script: make test build
+    - os: linux
+      arch: amd64
+    - os: linux
+      arch: arm64
+    - os: linux
+      arch: ppc64le
+    - os: linux
+      arch: s390x
+      script: make lint test build # -race not supported on s390x
+    - os: osx
+    - os: windows
+      script: choco install make && make lint testrace build
+      env:
+        - BIN_SUFFIX=".exe"
 
 
 deploy:
   provider: releases
   file:
     - bin/*.tar.gz
-    - bin/*.exe
   edge: true # opt in to dpl v2
   on:
     tags: true

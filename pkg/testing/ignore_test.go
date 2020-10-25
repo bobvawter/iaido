@@ -40,7 +40,7 @@ func TestIgnore(t *testing.T) {
 		return
 	}
 
-	a.NoError(conn.SetDeadline(time.Now().Add(10 * time.Millisecond)))
+	a.NoError(conn.SetDeadline(time.Now()))
 	_, err = conn.Write(make([]byte, 10*1024*1024))
 	if a.IsType(&net.OpError{}, err) {
 		a.True(err.(*net.OpError).Timeout())
