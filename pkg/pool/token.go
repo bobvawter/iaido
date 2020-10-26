@@ -31,7 +31,7 @@ type Token struct {
 }
 
 func tokenFinalizer(t *Token) {
-	t.Release()
+	t.doRelease(false)
 }
 
 // newToken constructs a Token for the pool and entry.  It also sets up
@@ -66,16 +66,25 @@ func (t *Token) Entry() Entry {
 // Release will return true the first time it is called and then false
 // thereafter.
 func (t *Token) Release() bool {
-	// See newToken().
-	runtime.SetFinalizer(t, nil)
+	return t.doRelease(true)
+}
 
+func (t *Token) doRelease(clearFinalizer bool) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.mu.entry
+	if e == nil {
+		return false
+	}
 	t.mu.entry = nil
 
+	if clearFinalizer {
+		runtime.SetFinalizer(t, nil)
+	}
+
+	// pool will be nil for 0-load tokens
 	if t.mu.pool == nil {
-		return false
+		return true
 	}
 
 	t.mu.pool.mu.Lock()
