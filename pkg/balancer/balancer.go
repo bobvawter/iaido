@@ -58,11 +58,13 @@ type Balancer struct {
 // BestAvailableTier returns the tier of the backend that will likely
 // be returned to service the next incoming connection.
 func (b *Balancer) BestAvailableTier() int {
-	t := b.p.Peek()
+	t := b.p.Pick()
 	if t == nil {
 		return math.MaxInt64
 	}
-	return t.Entry().Tier()
+	ret := t.Entry().Tier()
+	t.Release()
+	return ret
 }
 
 // Config returns the currently-active configuration.
