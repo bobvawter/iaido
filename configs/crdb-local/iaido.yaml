@@ -29,9 +29,6 @@ frontends:
             - hosts:
                 - 127.0.0.1
               port: 8082
-        - dialFailureTimeout: 30s
-          maxBackendConnections: 0
-          targets:
             - hosts:
                 - 127.0.0.1
               port: 8083

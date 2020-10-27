@@ -93,22 +93,27 @@ func (f *Frontend) Ensure(ctx context.Context, cfg *config.Config) error {
 				return errors.Wrapf(err, "could not configure backend pool for %q", fe.BindAddress)
 			}
 
+			// Establish initial latency values.
+			bl.balancer.Rebalance(loopCtx)
+
 			f.mu.loops[tgt.String()] = bl
 
 			// Set up a loop to rebalance the pool (e.g. to reactivate
 			// disabled backends or prune overloaded nodes.)
-			go func(b *balancer.Balancer) {
-				ticker := time.NewTicker(time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-loopCtx.Done():
-						return
-					case <-ticker.C:
-						b.Rebalance(loopCtx)
+			if fe.RebalanceDuration > 0 {
+				go func(b *balancer.Balancer) {
+					ticker := time.NewTicker(fe.RebalanceDuration)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-loopCtx.Done():
+							return
+						case <-ticker.C:
+							b.Rebalance(loopCtx)
+						}
 					}
-				}
-			}(bl.balancer)
+				}(bl.balancer)
+			}
 
 			switch tgt.Proto {
 			case config.TCP:

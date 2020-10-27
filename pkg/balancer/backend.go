@@ -40,6 +40,7 @@ type Backend struct {
 		disableDuration     time.Duration
 		disabledUntil       time.Time
 		forcePromotionAfter time.Duration
+		lastLatency         time.Duration
 		maxConnections      int
 		tier                int
 	}
@@ -50,13 +51,21 @@ func (b *Backend) Addr() net.Addr {
 	return b.addr
 }
 
-// DisableFor takes the Backend out of rotation for the given duration.
-func (b *Backend) DisableFor(d time.Duration) {
-	when := time.Now().Add(d)
-	log.Printf("disabling %s until %s", b.addr, when)
+// AssignTier (re-)assigns a Backend to a tier based on a latency metric.
+func (b *Backend) AssignTier(latency time.Duration, tier int) {
 	b.mu.Lock()
+	b.mu.lastLatency = latency
+	b.mu.tier = tier
+	b.mu.Unlock()
+}
+
+// Disable takes the Backend out of rotation for the configured duration.
+func (b *Backend) Disable() {
+	b.mu.Lock()
+	when := time.Now().Add(b.mu.disableDuration)
 	b.mu.disabledUntil = when
 	b.mu.Unlock()
+	log.Printf("disabling %s until %s", b.addr, when)
 }
 
 // ForcePromotionAfter indicates that clients should be forcefully
@@ -91,12 +100,14 @@ func (b *Backend) MarshalYAML() (interface{}, error) {
 		Address              string
 		DisabledUntil        time.Time     `yaml:"disabledUntil"`
 		ForcePromotionsAfter time.Duration `yaml:"forcePromotionsAfter"`
+		Latency              time.Duration `yaml:"latency"`
 		MaxConnections       int           `yaml:"maxConnections"`
-		Tier                 int
+		Tier                 int           `yaml:"tier"`
 	}{
 		Address:              b.addr.String(),
 		DisabledUntil:        b.mu.disabledUntil,
 		ForcePromotionsAfter: b.mu.forcePromotionAfter,
+		Latency:              b.mu.lastLatency,
 		MaxConnections:       b.mu.maxConnections,
 		Tier:                 b.mu.tier,
 	}

@@ -44,6 +44,8 @@ func TestMinimalConfig(t *testing.T) {
 		},
 	}
 
+	a.NoError(cfg.Validate())
+
 	data, err := yaml.Marshal(cfg)
 	if !a.NoError(err) {
 		return

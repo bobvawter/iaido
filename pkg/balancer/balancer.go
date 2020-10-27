@@ -22,6 +22,7 @@ import (
 	"math"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/bobvawter/iaido/pkg/config"
 	"github.com/bobvawter/iaido/pkg/pool"
@@ -53,18 +54,6 @@ type Balancer struct {
 		sync.Mutex
 		cfg *config.BackendPool
 	}
-}
-
-// BestAvailableTier returns the tier of the backend that will likely
-// be returned to service the next incoming connection.
-func (b *Balancer) BestAvailableTier() int {
-	t := b.p.Pick()
-	if t == nil {
-		return math.MaxInt64
-	}
-	ret := t.Entry().Tier()
-	t.Release()
-	return ret
 }
 
 // Config returns the currently-active configuration.
@@ -116,6 +105,7 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 
 				// (Re-)configure the backend.
 				backend.mu.Lock()
+				backend.mu.disableDuration = tier.DialFailureTimeout
 				backend.mu.dialTimeout = tier.DialFailureTimeout
 				backend.mu.forcePromotionAfter = tier.ForcePromotionAfter
 				if target.Disabled {
@@ -147,8 +137,6 @@ func (b *Balancer) Configure(ctx context.Context, cfg config.BackendPool, tolera
 			backend.mu.Unlock()
 		}
 	}
-
-	b.Rebalance(ctx)
 
 	return nil
 }
@@ -182,8 +170,31 @@ func (b *Balancer) Pick() *BackendToken {
 	return &BackendToken{t, b}
 }
 
-// Rebalance will rebalance the underlying pool.
+// Rebalance will rebalance the underlying pool by assigning backends to
+// latency buckets.
 func (b *Balancer) Rebalance(context.Context) {
+	b.mu.Lock()
+	latencyBucket := b.mu.cfg.LatencyBucket
+	b.mu.Unlock()
+
+	if latencyBucket > 0 {
+		all := b.p.All()
+		samples := make(latencySamples, 0, len(all))
+
+		for _, entry := range all {
+			backend := entry.(*Backend)
+			start := time.Now()
+			if conn, err := net.DialTimeout(backend.addr.Network(), backend.addr.String(), time.Second); err == nil {
+				end := time.Now()
+				_ = conn.Close()
+				samples = append(samples, latencySample{backend, end.Sub(start)})
+			} else {
+				backend.Disable()
+			}
+		}
+
+		samples.assign(latencyBucket)
+	}
 	b.p.Rebalance()
 }
 

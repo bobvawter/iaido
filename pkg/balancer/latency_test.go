@@ -14,41 +14,38 @@
 package balancer
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/bobvawter/iaido/pkg/loop"
-	it "github.com/bobvawter/iaido/pkg/testing"
 	"github.com/stretchr/testify/assert"
 )
 
-// Smoke test all of the methods in Backend.
-func TestBackend(t *testing.T) {
+func TestLatencyBucketAssignment(t *testing.T) {
 	a := assert.New(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 
-	addr, opt, err := it.CharGen(ctx, 4096)
-	if !a.NoError(err) {
-		return
+	tcs := map[time.Duration]int{
+		time.Millisecond:       0,
+		2 * time.Millisecond:   0,
+		3 * time.Millisecond:   0,
+		57 * time.Millisecond:  1,
+		63 * time.Millisecond:  1,
+		65 * time.Millisecond:  1,
+		67 * time.Millisecond:  2,
+		68 * time.Millisecond:  2,
+		100 * time.Millisecond: 3,
 	}
-	loop.New(opt).Start(ctx)
 
-	b := &Backend{
-		addr: addr,
+	samples := make(latencySamples, 0, len(tcs))
+	for latency := range tcs {
+		samples = append(samples, latencySample{&Backend{}, latency})
 	}
-	b.mu.maxConnections = 2
-	b.mu.tier = 2
-	a.Equal(2, b.Tier())
-	a.Equal(2, b.MaxLoad())
-	t.Log(b)
 
-	b.mu.disableDuration = time.Hour
-	b.Disable()
-	a.Equal(0, b.MaxLoad())
+	samples.assign(10 * time.Millisecond)
 
-	b.mu.disableDuration = 0
-	b.Disable()
-	a.Equal(2, b.MaxLoad())
+	for i := range samples {
+		latency := samples[i].backend.mu.lastLatency
+		tier := samples[i].backend.mu.tier
+
+		a.Equalf(tcs[latency], tier, "latency: %s", latency)
+	}
 }

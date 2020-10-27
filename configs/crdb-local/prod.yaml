@@ -7,49 +7,39 @@ frontends:
     backendPool:
       tiers:
         - maxBackendConnections: 256
-          targets:
-            - hosts: # East
-                - 10.142.0.85
-                - 10.142.0.89
-                - 10.142.0.86
-              port: 26257
-        - maxBackendConnections: 128
           forcePromotionAfter: 1m
           targets:
-            - hosts: # West
-                - 10.138.0.12
-                - 10.138.0.7
-                - 10.138.0.5
+            - hosts:
+                # East
+                - 10.142.0.3
+                - 10.142.0.2
+                - 10.142.0.5
+                # West
+                - 10.138.0.25
+                - 10.138.0.23
+                - 10.138.0.15
+                # Europe
+                - 10.154.0.24
+                - 10.154.0.39
+                - 10.154.0.25
               port: 26257
-        - maxBackendConnections: 8
-          forcePromotionAfter: 15s
-          targets:
-            - hosts: # Europe
-                - 10.154.0.73
-                - 10.154.0.75
-                - 10.154.0.72
-              port: 26257
-
   - bindAddress: :8080
     idleDuration: 5m
     backendPool:
       tiers:
         - targets:
             - hosts: # East
-                - 10.142.0.85
-                - 10.142.0.89
-                - 10.142.0.86
-              port: 26258
-        - targets:
-            - hosts: # West
-                - 10.138.0.12
-                - 10.138.0.7
-                - 10.138.0.5
-              port: 26258
-        - targets:
-            - hosts: # Europe
-                - 10.154.0.73
-                - 10.154.0.75
-                - 10.154.0.72
+                # East
+                - 10.142.0.3
+                - 10.142.0.2
+                - 10.142.0.5
+                # West
+                - 10.138.0.25
+                - 10.138.0.23
+                - 10.138.0.15
+                # Europe
+                - 10.154.0.24
+                - 10.154.0.39
+                - 10.154.0.25
               port: 26258
 gracePeriod: 5s

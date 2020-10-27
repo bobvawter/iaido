@@ -103,11 +103,14 @@ func proxy(
 				return ctx.Err()
 			case now := <-ticker.C:
 				// See if there's room to promote the connection.
-				if backend.Tier() > 0 && backend.ForcePromotionAfter() != 0 && promotableSince.IsZero() {
-					if better := token.Balancer().BestAvailableTier(); better < backend.Tier() {
-						promotableSince = now
-					} else {
-						promotableSince = time.Time{}
+				if promotableSince.IsZero() && backend.Tier() > 0 && backend.ForcePromotionAfter() != 0 {
+					if better := token.Balancer().Pick(); better != nil {
+						if better.Entry().Tier() < backend.Tier() && !token.Balancer().IsOverloaded(better.Entry()) {
+							promotableSince = now
+						} else {
+							promotableSince = time.Time{}
+						}
+						better.Release()
 					}
 				}
 
