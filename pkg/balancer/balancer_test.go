@@ -15,6 +15,7 @@ package balancer
 
 import (
 	"context"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net"
@@ -59,15 +60,21 @@ func TestBalancerEndToEnd(t *testing.T) {
 			Targets:            targets,
 		}},
 	}
+	a.NoError(cfg.Validate())
 
 	b := &Balancer{}
 	a.NoError(b.Configure(ctx, cfg, false))
+	b.Rebalance(ctx)
 
 	for i := 0; i < requestCount; i++ {
 		token := b.Pick()
 		checkBackend(a, token.Entry())
 		token.Release()
 	}
+
+	token, err := b.Wait(ctx)
+	a.NotNil(token)
+	a.NoError(err)
 
 	// Ensure that all backends have received traffic
 	for idx, fn := range counters {
@@ -83,6 +90,10 @@ func TestBalancerEndToEnd(t *testing.T) {
 	}
 	a.NoError(b.Configure(ctx, cfg, false))
 	a.Nil(b.Pick())
+	shortCtx, cancel2 := context.WithTimeout(ctx, time.Millisecond)
+	defer cancel2()
+	_, err = b.Wait(shortCtx)
+	a.True(errors.Is(err, context.DeadlineExceeded))
 }
 
 // Ensure that Backend instances are preserved across reconfigurations.
@@ -100,6 +111,7 @@ func TestBalancerReconfigure(t *testing.T) {
 
 	b := &Balancer{}
 	a.NoError(b.Configure(ctx, cfg, false))
+	b.Rebalance(ctx)
 
 	for i := 0; i < backends; i++ {
 		cfg.Tiers[0].Targets = append(cfg.Tiers[0].Targets, config.Target{Hosts: []string{"127.0.0.1"}, Port: i, Proto: config.TCP})

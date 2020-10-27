@@ -64,7 +64,9 @@ func TestSmoke(t *testing.T) {
 		Frontends: []config.Frontend{
 			{
 				BackendPool: config.BackendPool{
-					Tiers: []config.Tier{tier},
+					// Disable extra pings so our request counts are correct.
+					LatencyBucket: -1,
+					Tiers:         []config.Tier{tier},
 				},
 				BindAddress:  ":13013",
 				IdleDuration: time.Minute,

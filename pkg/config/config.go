@@ -58,6 +58,8 @@ type Frontend struct {
 	BindAddress string `yaml:"bindAddress"`
 	// The time after which an idle connection should be pruned.
 	IdleDuration time.Duration `yaml:"idleDuration"`
+	// How often to rebalance backends across tiers.
+	RebalanceDuration time.Duration `yaml:"rebalanceDuration"`
 }
 
 // Validate checks the value.
@@ -70,11 +72,22 @@ func (f *Frontend) Validate() error {
 	if f.IdleDuration == 0 {
 		f.IdleDuration = time.Hour
 	}
+	if f.RebalanceDuration == 0 {
+		f.RebalanceDuration = 10 * time.Second
+	}
 	return f.BackendPool.Validate()
 }
 
 // BackendPool represents the actual machines to connect to.
 type BackendPool struct {
+	// LatencyBucket allows backends to be assigned to tiers
+	// automatically. Backends are grouped such that the latencies of
+	// the fastest and slowest entries in a tier are no greater than the
+	// given value.
+	//
+	// Automatic latency detection can be disabled by setting this to a
+	// negative value.
+	LatencyBucket time.Duration `yaml:"latencyBucket"`
 	// How often connections within the pool should be evaluated for
 	// over-load conditions, promotion to a higher tier, etc.
 	// Longer values provide better damping of behavior, at the cost
@@ -86,6 +99,9 @@ type BackendPool struct {
 
 // Validate checks the value.
 func (b *BackendPool) Validate() error {
+	if b.LatencyBucket == 0 {
+		b.LatencyBucket = 10 * time.Millisecond
+	}
 	if b.MaintenanceTime == 0 {
 		b.MaintenanceTime = 30 * time.Second
 	}
