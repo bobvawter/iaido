@@ -14,7 +14,8 @@ go:
 
 cache:
   directories:
-    - $GOPATH/pkg/mod
+    - $(go env GOCACHE)
+    - $(go env GOPATH)/pkg/mod
 
 script: make testrace build
 
