@@ -87,7 +87,10 @@ func (p *Pool) IsOverloaded(e Entry) bool {
 	if meta == nil {
 		return true
 	}
-	return meta.load > meta.maxLoad
+	meta.mu.RLock()
+	defer meta.mu.RUnlock()
+
+	return meta.mu.load > meta.mu.maxLoad
 }
 
 // Len returns the total size of the pool.
@@ -107,7 +110,9 @@ func (p *Pool) Load(e Entry) int {
 	if meta == nil {
 		return 0
 	}
-	return meta.load
+	meta.mu.RLock()
+	defer meta.mu.RUnlock()
+	return meta.mu.load
 }
 
 // MarshalYAML dumps the current status of the Pool into a YAML structure.
@@ -124,12 +129,9 @@ func (p *Pool) MarshalYAML() (interface{}, error) {
 	}
 
 	for _, entry := range snapshot {
-		payload.Tiers[entry.tier] = append(payload.Tiers[entry.tier], entry)
-	}
-	for _, tier := range payload.Tiers {
-		sort.SliceStable(tier, func(i, j int) bool {
-			return tier[i].load > tier[j].load
-		})
+		entry.mu.RLock()
+		payload.Tiers[entry.mu.tier] = append(payload.Tiers[entry.mu.tier], entry)
+		entry.mu.RUnlock()
 	}
 	return payload, nil
 }

@@ -92,7 +92,7 @@ func (t *Token) doRelease(clearFinalizer bool) bool {
 
 	// If the index is -1, then the Entry has been removed from the Pool.
 	if e.index != notInPQueue {
-		t.mu.pool.mu.q.update(e, t.release, e.mark)
+		t.mu.pool.mu.q.update(e, t.release, noMark)
 		t.mu.pool.pickMightSucceedLocked()
 	}
 	t.mu.pool = nil

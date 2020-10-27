@@ -67,13 +67,11 @@ func (q *entryPQueue) Pop() interface{} {
 
 func (q *entryPQueue) add(entry Entry) *entryMeta {
 	ret := &entryMeta{
-		Entry:   entry,
-		index:   notInPQueue,
-		load:    0,
-		mark:    0,
-		maxLoad: entry.MaxLoad(),
-		tier:    entry.Tier(),
+		Entry: entry,
+		index: notInPQueue,
 	}
+	ret.mu.maxLoad = entry.MaxLoad()
+	ret.mu.tier = entry.Tier()
 	heap.Push(q, ret)
 	return ret
 }
@@ -85,26 +83,33 @@ func (q *entryPQueue) remove(meta *entryMeta) {
 func (q *entryPQueue) update(meta *entryMeta, loadDelta int, mark mark) bool {
 	ret := false
 
-	meta.mark = mark
-	meta.maxLoad = meta.MaxLoad()
-	meta.tier = meta.Tier()
+	meta.mu.Lock()
+	if mark != noMark {
+		meta.mu.mark = mark
+	}
+	meta.mu.maxLoad = meta.MaxLoad()
+	meta.mu.tier = meta.Tier()
 	// Only allow the load to increase by the delta, up to the max.
-	if loadDelta > 0 && meta.load+loadDelta <= meta.maxLoad {
-		meta.load += loadDelta
+	if loadDelta > 0 && meta.mu.load+loadDelta <= meta.mu.maxLoad {
+		meta.mu.load += loadDelta
 		ret = true
 	} else if loadDelta <= 0 {
 		// But always allow load to be shed (e.g. drain a 0-cap backend)
-		meta.load += loadDelta
+		meta.mu.load += loadDelta
 		ret = true
 	}
+	meta.mu.Unlock()
+
 	heap.Fix(q, meta.index)
 	return ret
 }
 
 func (q *entryPQueue) updateAll() {
 	for _, meta := range *q {
-		meta.maxLoad = meta.MaxLoad()
-		meta.tier = meta.Tier()
+		meta.mu.Lock()
+		meta.mu.maxLoad = meta.MaxLoad()
+		meta.mu.tier = meta.Tier()
+		meta.mu.Unlock()
 	}
 	heap.Init(q)
 }

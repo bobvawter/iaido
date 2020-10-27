@@ -13,6 +13,11 @@
 
 package pool
 
+import (
+	"math"
+	"sync"
+)
+
 // An Entry represents something that can be picked out of a Pool.
 type Entry interface {
 	// MaxLoad allows an entry to specify the number of times that it
@@ -38,25 +43,34 @@ type Entry interface {
 // comparison operations.
 type entryMeta struct {
 	Entry
-
-	// This is the internal index used by the heap package.
+	mu struct {
+		sync.RWMutex
+		// The current number of tokens outstanding for the entry.
+		load int
+		// Record when the entry was last chosen to create a round-robin
+		// effect.
+		mark mark
+		// Snapshot of MaxLoad().
+		maxLoad int
+		// Snapshot of Tier().
+		tier int
+	}
+	// This is the internal index used by the heap package. It's not
+	// part of the above mutex struct since it should only ever be
+	// updated when the Pool mutex is held.
 	index int
-	// The current number of tokens outstanding for the entry.
-	load int
-	// Record when the entry was last chosen to create a round-robin
-	// effect.
-	mark mark
-	// Snapshot of MaxLoad().
-	maxLoad int
-	// Snapshot of Tier().
-	tier int
 }
 
 // A mark is used as a selection counter to provide a basic round-robin
 // behavior, presuming all other weighting concerns are equal.
 type mark uint64
 
+// A sentinel value for entryPQueue.update.
+const noMark = mark(math.MaxUint64)
+
 func (e *entryMeta) MarshalYAML() (interface{}, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	payload := struct {
 		Entry   interface{}
 		Load    int
@@ -65,30 +79,36 @@ func (e *entryMeta) MarshalYAML() (interface{}, error) {
 		Tier    int
 	}{
 		Entry:   e.Entry,
-		Load:    e.load,
-		Mark:    e.mark,
-		MaxLoad: e.maxLoad,
-		Tier:    e.tier,
+		Load:    e.mu.load,
+		Mark:    e.mu.mark,
+		MaxLoad: e.mu.maxLoad,
+		Tier:    e.mu.tier,
 	}
 	return payload, nil
 }
 
 func (e *entryMeta) costLowerThan(other *entryMeta) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	other.mu.RLock()
+	defer other.mu.RUnlock()
+
 	// Overloaded nodes are always higher-cost than not.
-	eOverload := e.load >= e.maxLoad
-	otherOverload := other.load >= other.maxLoad
+	eOverload := e.mu.load >= e.mu.maxLoad
+	otherOverload := other.mu.load >= other.mu.maxLoad
 	if eOverload != otherOverload {
 		return otherOverload
 	}
 
 	// Prefer closer tiers.
-	if c := e.tier - other.tier; c != 0 {
+	if c := e.mu.tier - other.mu.tier; c != 0 {
 		return c < 0
 	}
 	// Prefer lower loads.
-	if c := e.load - other.load; c != 0 {
+	if c := e.mu.load - other.mu.load; c != 0 {
 		return c < 0
 	}
 	// Otherwise, round-robin.
-	return e.mark < other.mark
+	return e.mu.mark < other.mu.mark
 }

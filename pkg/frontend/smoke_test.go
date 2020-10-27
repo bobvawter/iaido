@@ -63,6 +63,7 @@ func TestSmoke(t *testing.T) {
 	cfg := &config.Config{
 		Frontends: []config.Frontend{
 			{
+				RebalanceDuration: time.Millisecond,
 				BackendPool: config.BackendPool{
 					// Disable extra pings so our request counts are correct.
 					LatencyBucket: -1,
@@ -116,6 +117,12 @@ func TestSmoke(t *testing.T) {
 	data, err := yaml.Marshal(&fe)
 	a.NoError(err)
 	log.Print(string(data))
+
+	// Test tearing down a frontend.
+	cfg.Frontends = []config.Frontend{}
+	a.NoError(fe.Ensure(ctx, cfg))
+	_, err = net.Dial("tcp", "127.0.0.1:13013")
+	a.Errorf(err, "connection refused")
 }
 
 type CharGenServer struct {
