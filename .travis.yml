@@ -12,22 +12,27 @@ language: go
 go:
   - 1.x
 
-script: make lint testrace build
+cache:
+  directories:
+    - $GOPATH/pkg/mod
+
+script: make testrace build
 
 jobs:
   include:
     - os: linux
       arch: amd64
+      script: make lint testrace build # Only run lint here
     - os: linux
       arch: arm64
     - os: linux
       arch: ppc64le
     - os: linux
       arch: s390x
-      script: make lint test build # -race not supported on s390x
+      script: make test build # -race not supported on s390x
     - os: osx
     - os: windows
-      script: choco install make && make lint testrace build
+      script: choco install make && make testrace build
       env:
         - BIN_SUFFIX=".exe"
 
