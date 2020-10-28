@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -31,16 +32,24 @@ import (
 
 func main() {
 	fs := pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
+	boot := fs.StringSliceP("bootstrap", "b", nil,
+		"A list of bindings to bootstrap a configuration file with. "+
+			"The syntax for a binding is localPort:remoteHost:remotePort "+
+			"(e.g. 8080:example.com:80). This flag may be repeated multiple times.")
+	bootAddr := fs.String("bootstrapAddr", "", "the local network address to bind to")
+	help := fs.BoolP("help", "h", false, "display this message")
+	force := fs.BoolP("force", "f", false, "(bootstrap) overwrite any existing configuration file")
 	cfgPath := fs.StringP("config", "c", "iaido.yaml", "the configuration file to load")
 	cfgReloadPeriod := fs.Duration("reloadPeriod", time.Second, "how often to check the configuration file for changes")
 	checkOnly := fs.Bool("check", false, "if true, check and print the configuration file and exit")
-	version := fs.Bool("version", false, "print the version and exit")
+	version := fs.Bool("version", false, fmt.Sprintf("print the version %q and exit", frontend.BuildID()))
 	if err := fs.Parse(os.Args[1:]); err != nil {
-		if err != pflag.ErrHelp {
-			println(err.Error())
-			println()
-			println(fs.FlagUsagesWrapped(100))
-		}
+		println(err.Error())
+		*help = true
+	}
+
+	if *help {
+		println(fs.FlagUsagesWrapped(100))
 		os.Exit(1)
 	}
 
@@ -50,6 +59,22 @@ func main() {
 	}
 
 	cfg := &config.Config{}
+
+	if *boot != nil {
+		if !*force {
+			if _, err := os.Stat(*cfgPath); err == nil {
+				log.Fatalf("configuration file %s already exists", *cfgPath)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				log.Fatal(err)
+			}
+		}
+
+		if err := config.Bootstrap(cfg, *cfgPath, *bootAddr, *boot); err != nil {
+			log.Fatal(err)
+		}
+		*checkOnly = true
+	}
+
 	var mTime time.Time
 	loadConfig := func() (bool, error) {
 		info, err := os.Stat(*cfgPath)
