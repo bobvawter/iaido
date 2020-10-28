@@ -69,7 +69,7 @@ func (p Proto) String() string {
 }
 
 // ParseTarget parses a human-provided description of a target.
-// It should be of the form "host:port" with an optional "
+// It should be of the form "host:port" with an optional protocol.
 func ParseTarget(target string) (Target, error) {
 	tgt := Target{}
 	if target == "" {

@@ -48,6 +48,9 @@ func (c *Config) Validate() error {
 			return errors.Wrapf(err, "Frontends[%d]", i)
 		}
 	}
+	if c.GracePeriod == 0 {
+		c.GracePeriod = 5 * time.Second
+	}
 	return nil
 }
 
