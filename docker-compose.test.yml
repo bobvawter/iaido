@@ -1,0 +1,8 @@
+# See https://docs.docker.com/docker-hub/builds/automated-testing/
+version: "3.8"
+services:
+  sut:
+    build:
+      context: .
+      target: builder
+    command: make lint test
