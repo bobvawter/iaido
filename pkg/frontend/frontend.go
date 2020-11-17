@@ -27,8 +27,8 @@ import (
 	"github.com/bobvawter/iaido/pkg/balancer"
 	"github.com/bobvawter/iaido/pkg/config"
 	"github.com/bobvawter/iaido/pkg/frontend/tcp"
-	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
+	"github.com/bobvawter/latch"
 	"github.com/pkg/errors"
 )
 
@@ -45,7 +45,7 @@ func BuildID() string {
 type Frontend struct {
 	mu struct {
 		sync.Mutex
-		latch *latch.Latch
+		latch *latch.Counter
 		// A map of local listen addresses to the plumbing that handles
 		// the connectivity.
 		loops map[string]*balanceLoop
@@ -184,6 +184,6 @@ func (f *Frontend) Wait() {
 	f.mu.Unlock()
 
 	if latch != nil {
-		latch.Wait()
+		<-latch.Wait()
 	}
 }

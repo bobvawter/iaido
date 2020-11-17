@@ -18,7 +18,7 @@ import (
 	"net"
 	"sync/atomic"
 
-	"github.com/bobvawter/iaido/pkg/latch"
+	"github.com/bobvawter/latch"
 )
 
 // An Option is used to provide additional configuration to a server or
@@ -64,12 +64,12 @@ func (*preflight) is(option) {}
 // WithLatch will inject a Latch that is held whenever a
 // connection is active.  This allows callers to implement a graceful
 // draining strategy.
-func WithLatch(l *latch.Latch) Option {
+func WithLatch(l *latch.Counter) Option {
 	return withLatch{l}
 }
 
 type withLatch struct {
-	latch *latch.Latch
+	latch *latch.Counter
 }
 
 func (withLatch) is(option) {}
