@@ -1,0 +1,10 @@
+version: "3.0"
+services:
+  workload-init:
+    image: cockroachdb/cockroach:latest-v20.2
+    command: workload init ycsb --drop postgres://iaido:26257?sslmode=disable
+  workload:
+    image: cockroachdb/cockroach:latest-v20.2
+    command: workload run ycsb --concurrency 64 --tolerate-errors postgres://iaido:26257?sslmode=disable
+    depends_on:
+      - workload-init
