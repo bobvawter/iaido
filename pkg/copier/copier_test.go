@@ -22,9 +22,9 @@ import (
 
 	"io/ioutil"
 
-	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
 	it "github.com/bobvawter/iaido/pkg/testing"
+	"github.com/bobvawter/latch"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )

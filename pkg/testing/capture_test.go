@@ -22,8 +22,8 @@ import (
 
 	"sync/atomic"
 
-	"github.com/bobvawter/iaido/pkg/latch"
 	"github.com/bobvawter/iaido/pkg/loop"
+	"github.com/bobvawter/latch"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,7 +51,7 @@ func TestCapture(t *testing.T) {
 	_, err = io.Copy(conn, bytes.NewReader(make([]byte, size)))
 	a.NoError(err)
 	a.NoError(conn.Close())
-	l.Wait()
+	<-l.Wait()
 	a.Equal(uint64(size), atomic.LoadUint64(&ctr.count))
 }
 

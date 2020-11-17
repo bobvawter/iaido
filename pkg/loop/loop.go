@@ -20,7 +20,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/bobvawter/iaido/pkg/latch"
+	"github.com/bobvawter/latch"
 	"github.com/pkg/errors"
 )
 
