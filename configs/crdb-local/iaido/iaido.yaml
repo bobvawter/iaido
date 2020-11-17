@@ -1,0 +1,41 @@
+# This is a complete, and therefore verbose, configuration file.
+# Refer to https://github.com/bobvawter/iaido/wiki/Configuration
+diagAddr: :6060
+frontends:
+  - backendPool:
+      latencyBucket: 10ms
+      maintenanceTime: 5s
+      tiers:
+        - dialFailureTimeout: 30s
+          forcePromotionAfter: 0s
+          maxBackendConnections: 32
+          targets:
+            - disabled: false
+              hosts:
+                - node1
+                - node2
+                - node3
+              port: 26257
+              proto: TCP
+    bindAddress: :26257
+    idleDuration: 1h0m0s
+    rebalanceDuration: 10s
+  - backendPool:
+      latencyBucket: 10ms
+      maintenanceTime: 30s
+      tiers:
+        - dialFailureTimeout: 30s
+          forcePromotionAfter: 0s
+          maxBackendConnections: 0
+          targets:
+            - disabled: false
+              hosts:
+                - node1
+                - node2
+                - node3
+              port: 8080
+              proto: TCP
+    bindAddress: :8080
+    idleDuration: 1h0m0s
+    rebalanceDuration: 10s
+gracePeriod: 30s

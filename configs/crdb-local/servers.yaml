@@ -1,0 +1,51 @@
+version: "3.0"
+services:
+  node1:
+    hostname: node1
+    image: cockroachdb/cockroach:latest-v20.2
+    command: start --join node1,node2,node3 --insecure
+    volumes:
+      - type: bind
+        source: ./node1
+        target: /cockroach/cockroach-data
+
+  node2:
+    hostname: node2
+    image: cockroachdb/cockroach:latest-v20.2
+    command: start --join node1,node2,node3 --insecure
+    volumes:
+      - type: bind
+        source: ./node2
+        target: /cockroach/cockroach-data
+
+  node3:
+    hostname: node3
+    image: cockroachdb/cockroach:latest-v20.2
+    command: start --join node1,node2,node3 --insecure
+    volumes:
+      - type: bind
+        source: ./node3
+        target: /cockroach/cockroach-data
+
+  init:
+    image: cockroachdb/cockroach:latest-v20.2
+    depends_on:
+      - node1
+      - node2
+      - node3
+    command: init --insecure --host node1
+
+  iaido:
+    hostname: iaido
+    image: bobvawter/iaido:latest
+    #    build:
+    #      target: deploy
+    #      context: ../..
+    ports:
+      - 6060:6060
+      - 8080:8080
+      - 26257:26257
+    volumes:
+      - type: bind
+        source: ./iaido
+        target: /data
