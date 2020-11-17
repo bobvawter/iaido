@@ -1,2 +1,3 @@
 bin/
+configs/**/node*/
 coverage.txt

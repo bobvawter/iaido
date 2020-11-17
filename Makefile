@@ -3,7 +3,7 @@
 all: build
 
 build: generate
-	go build -ldflags "-s -w -X github.com/bobvawter/iaido/pkg/frontend.buildID=`git describe --tags --always --dirty`" -o bin/iaido$(BIN_SUFFIX) ./cmd/iaido
+	CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/bobvawter/iaido/pkg/frontend.buildID=`git describe --tags --always --dirty`" -o bin/iaido$(BIN_SUFFIX) ./cmd/iaido
 	tar cfz bin/iaido$(BUILD_SUFFIX).tar.gz -C bin iaido$(BIN_SUFFIX)
 
 clean:
